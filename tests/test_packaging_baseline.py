@@ -101,3 +101,26 @@ def test_config_document_roundtrip_golden() -> None:
     golden 比对）。当前显式 skip 并带任务号，符合"禁止静默跳过"约定。
     """
     pytest.importorskip("hivm_spec.generator", reason="PENDING(T0.3) 生成器未实现")
+
+
+def test_d12_single_ir_contract_is_documented() -> None:
+    """D12：工具输入契约的边界必须在文档与 agent 规约中同时可查。
+
+    D12 是**范围边界**决策（拒绝一类能力），其风险特征是"未来的 agent 在合理推演
+    中重新提出越界方案"。故此处不检查实现，而是守护边界的可引用性：决策与其被拒
+    备选留在 design-framework，可执行约束留在 AGENTS.md。二者缺一，边界就会退化为
+    需要反复重新论证的口头约定。
+    """
+    framework = (REPO_ROOT / "docs" / "design-framework.md").read_text(encoding="utf-8")
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "### D12" in framework, "design-framework 缺 D12 决策条目"
+    assert "被拒绝的备选" in framework, "D12 须留档被拒备选以防重复提案"
+
+    # 断言实质约束而非仅提及编号：AGENTS.md 的不可违约束表须同时载明
+    # "不吃 pass 序列" 与 "不解析转储" 两条禁令，且指明 D12 出处。
+    constraint_row = next(
+        (ln for ln in agents.splitlines() if "pass 序列" in ln and "D12" in ln), None
+    )
+    assert constraint_row, "AGENTS.md 架构约束表缺 D12 的单 IR 输入条目"
+    assert "print-ir" in constraint_row, "D12 约束须明确拒绝解析 --print-ir-* 转储"

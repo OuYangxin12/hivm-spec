@@ -44,10 +44,10 @@ spec 工具（统一契约：吃 MLIR，吐结构化结论/视图）
 | 文档 | 内容 |
 |---|---|
 | [docs/requirements.md](docs/requirements.md) | 需求基线（FR/NFR/AC 编号体系；§6 未决问题处置状态） |
-| [docs/design-framework.md](docs/design-framework.md) | 方案框架与已定决策（D1–D11）、VIR 契约（§6.1）、漂移流程（§8.1）、审查台账（§13） |
+| [docs/design-framework.md](docs/design-framework.md) | 方案框架与已定决策（D1–D12）、VIR 契约（§6.1）、工具输入契约（§7）、漂移流程（§8.1）、审查台账（§13） |
 | [docs/industry-research.md](docs/industry-research.md) | 业界调研与决策依据（Sail/EDA/系统化并发测试/Rosette） |
 | [docs/milestone-plan.md](docs/milestone-plan.md) | 里程碑执行计划（M0–M4 任务分解）与工程约定 |
-| [AGENTS.md](AGENTS.md) | agent 工作规约：spec-gate 门禁、描述治理纪律、架构不可违约束 |
+| [AGENTS.md](AGENTS.md) | agent 工作规约：spec-gate 门禁、描述治理纪律、架构不可违约束、跨 pass 定位编排 |
 
 ## 路线图
 

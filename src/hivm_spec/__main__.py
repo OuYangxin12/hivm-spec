@@ -29,8 +29,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("descriptions", nargs="+", help="待检查的描述文件")
 
     p_tool = sub.add_parser("tool", help="运行 spec 工具（M1+）")
-    p_tool.add_argument("name", help="工具名，如 ub_occupancy / timeline")
-    p_tool.add_argument("inputs", nargs="+", help="输入 MLIR 文件")
+    p_tool.add_argument("name", help="工具名，如 ub_occupancy / timeline / equivalence")
+    # D12：输入恒为单份 IR；仅等价验证取两份（待验 + 锚点）。不接受 pass 序列——
+    # 跨 pass 定位由 agent 对每份 dump 分别调用来编排（见 AGENTS.md §6）。
+    p_tool.add_argument(
+        "inputs",
+        nargs="+",
+        metavar="IR",
+        help="输入 MLIR：单份（占用/时序）或两份 <待验> <锚点>（等价验证）",
+    )
 
     return ap
 
