@@ -96,7 +96,7 @@ def run_ub_occupancy(config: dict[str, Any], module: VModule, spec_hash: str = "
             ],
         )
 
-    spaces = tuple(check_cfg.get("params", {}).get("spaces", ()) or ())
+    spaces = tuple(check_cfg.get("options", {}).get("spaces", ()) or ())
     occ = analyze_occupancy(module, caps, spaces_of_interest=spaces)
 
     findings = _gap_findings(module, occ)
@@ -150,6 +150,10 @@ def run_ub_occupancy(config: dict[str, Any], module: VModule, spec_hash: str = "
         unsized = sum(len(s.unsized) for s in occ.spaces.values())
         unmodeled = module.coverage.unmodeled_ops()
         reasons = []
+        if occ.is_vacuous or not occ.spaces:
+            reasons.append(
+                "在被检查的地址空间中未找到任何 buffer——本结论不代表『不溢出』，而代表『未能分析』"
+            )
         if unsized:
             reasons.append(f"{unsized} 个 buffer 尺寸未知（峰值仅为下界）")
         if unmodeled:
@@ -184,6 +188,12 @@ def _decide_verdict(module: VModule, occ: OccupancyResult, trust: str) -> Verdic
     """
     if occ.any_overflow:
         return Verdict.OVERFLOW
+
+    # **空洞 OK 的防线**：一个 buffer 都没找到时，"未溢出"不是结论而是无知。
+    # 实测 annotate-vf-alias.mlir 曾因此拿到干净的 OK——它的 3 个 UB buffer
+    # 是函数参数而非 memref.alloc，工具什么都没分析却给了绿灯。
+    if occ.is_vacuous or not occ.spaces:
+        return Verdict.COVERAGE_GAP
 
     has_unsized = any(s.unsized for s in occ.spaces.values())
     if not module.coverage.is_complete or has_unsized:

@@ -29,6 +29,7 @@ from typing import Protocol, runtime_checkable
 
 __all__ = [
     "Access",
+    "AllocOrigin",
     "Coverage",
     "Effect",
     "GapKind",
@@ -115,6 +116,22 @@ class SizeOrigin(Enum):
     COMPILER_ANNOTATION = "compiler_annotation"
     TEST_PARAMETERIZED = "test_parameterized"
     UNKNOWN = "unknown"
+
+
+class AllocOrigin(Enum):
+    """buffer 的**来源**：本函数内分配，还是由外部传入。
+
+    区分二者是必要的：函数参数形态的片上 buffer 同样占用空间，但其生存期
+    覆盖整个函数（调用方持有），且不由本函数决定。把它们与 `memref.alloc`
+    混为一谈会算错生存期；而完全忽略它们会造成**假阴性**——实测主仓
+    `annotate-vf-alias.mlir` 的 3 个 UB buffer 全是函数参数，若只看 alloc
+    则该 kernel 的占用被算作 0 并给出 OK。
+    """
+
+    #: 函数体内 memref.alloc / alloca
+    LOCAL_ALLOC = "local_alloc"
+    #: 函数参数（调用方分配，生存期覆盖全函数）
+    FUNC_ARG = "func_arg"
 
 
 class GapKind(Enum):
@@ -226,6 +243,8 @@ class VAlloc:
     size_origin: SizeOrigin = SizeOrigin.UNKNOWN
     #: 原始 shape 文本（如 "4x16x16xf32" 或 "?x16xf16"），保真存档
     shape_text: str = ""
+    #: buffer 来源：本地分配还是函数参数（影响生存期口径）
+    origin: AllocOrigin = AllocOrigin.LOCAL_ALLOC
     #: 该 alloc 结果的 SSA value 文本。生存期分析靠它把 buffer 与节点操作数
     #: 精确关联——若改用"按出现顺序对齐"的近似，关联一旦错位，生存期就会算错，
     #: 而错误方向不可控（可能低估峰值把溢出判成 OK）。
@@ -314,7 +333,7 @@ class VRegion:
     """
 
     id: str
-    #: "func" | "for" | "if" | "while" | "scope" | "block"
+    #: "module" | "func" | "for" | "if" | "while" | "scope" | "block"
     kind: str
     loc: Loc
     #: **程序序**的子项序列（节点与子区域交错），是顺序的唯一真源。

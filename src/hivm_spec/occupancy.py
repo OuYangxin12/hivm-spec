@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 from hivm_spec.vir import (
     Access,
+    AllocOrigin,
     GapKind,
     Loc,
     SizeOrigin,
@@ -83,6 +84,15 @@ class SpaceOccupancy:
         return self.capacity is not None and self.peak_bytes > self.capacity
 
     @property
+    def is_vacuous(self) -> bool:
+        """本 space 是否什么都没分析到。
+
+        零 buffer 的"未溢出"是**空洞结论**：它不是"这个 kernel 安全"，而是
+        "我没找到任何 buffer"。二者对 agent 的意义完全相反。
+        """
+        return not self.intervals and not self.unsized
+
+    @property
     def headroom(self) -> int | None:
         if self.capacity is None:
             return None
@@ -106,6 +116,15 @@ class OccupancyResult:
     @property
     def any_overflow(self) -> bool:
         return any(s.overflows for s in self.spaces.values())
+
+    @property
+    def is_vacuous(self) -> bool:
+        """所有被检查的 space 都没有任何 buffer。
+
+        此时"未溢出"毫无信息量，必须降级为缺口而非给 OK——否则一个
+        本工具根本没看懂的 kernel 会得到干净的绿灯（FR6 反自欺）。
+        """
+        return bool(self.spaces) and all(s.is_vacuous for s in self.spaces.values())
 
     @property
     def overflowing_spaces(self) -> tuple[str, ...]:
@@ -191,6 +210,19 @@ def analyze_occupancy(
                 )
                 continue
 
+            if alloc.origin is AllocOrigin.FUNC_ARG:
+                # 函数参数由调用方持有：生存期覆盖整个函数，与是否被本函数
+                # 访问无关。按"活到末尾"处理，不登记"未见访问"缺口。
+                so.intervals.append(
+                    Interval(
+                        alloc=alloc,
+                        start=0,
+                        end=max(len(order) - 1, 0),
+                        never_used=False,
+                    )
+                )
+                continue
+
             start = _alloc_index(module, alloc, order)
             last = _last_access_index(module, alloc.name, order, value_map)
             never = last < 0
@@ -235,8 +267,16 @@ def _compute_curve(so: SpaceOccupancy, n_points: int) -> None:
     若被同时计入会产生**虚假溢出**，而漏算跨循环存活的 buffer 会**漏报真实溢出**。
     """
     if n_points <= 0:
-        so.curve = []
-        so.peak_bytes = 0
+        # 没有任何 hivm 节点，但可能仍有 buffer（如全 vector.* 的 kernel，其
+        # 片上 buffer 由函数参数传入）。此时不能让峰值停留在 0——那会把
+        # 768B 的真实占用报成 0。退化为单点：所有 buffer 同时活跃。
+        total = sum(iv.nbytes or 0 for iv in so.intervals)
+        so.curve = [(0, total)] if so.intervals else []
+        so.peak_bytes = total
+        so.peak_at = 0 if so.intervals else -1
+        so.peak_contributors = sorted(
+            so.intervals, key=lambda iv: (-(iv.nbytes or 0), iv.alloc.name)
+        )
         return
 
     for point in range(n_points):
