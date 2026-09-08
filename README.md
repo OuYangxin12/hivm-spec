@@ -1,0 +1,69 @@
+<div align="center">
+
+# hivm-spec
+
+**A verifier generator for AI-assisted AscendNPU-IR (HIVM) compiler development**
+
+用 DSL 建模 HIVM 虚拟机的语义域，按需生成快速验证工具，让 AI 在 pass 开发回路中秒级获得 success/fail 与运行状态视图。
+
+</div>
+
+## 为什么
+
+在 vibecoding 实践中，AI 代理承担编译器 pass 的开发与迭代，但现有验证手段存在三个缺口：
+
+1. **语义缺位**：lit/FileCheck 是结构性验证，且 AI 可通过更新期望值将错误输出"合法化"；
+2. **反馈速度**：真机 E2E 资源稀缺、周期长，无法进入开发回路；
+3. **维度缺失**：计算语义等效（结构全新的 IR）、死锁、片上内存溢出（UB/CBUF）三类高频验证目标完全无覆盖。
+
+## 核心机制：验证器生成器
+
+**MLIR 千变万化，正确性类别有限。** 因此不逐个建造验证工具，而是：
+
+```
+agent 写描述（Python 内嵌 DSL）
+        │  ops: op 值语义 + 效应（内存/pipe/event）
+        │  vm : 状态模型（地址空间/容量/调度）
+        │  checks: 要生成的工具与判定口径
+        ▼
+DSL 解释器 / 生成器（静态检查 → 归一化 → 配置文档 → 元编程装配）
+        ▼
+spec 工具（统一契约：吃 MLIR，吐结构化结论/视图）
+  ├── 等价验证：两份 MLIR → success/fail + 发散定位
+  ├── UB 占用图：MLIR → 片上内存占用曲线与峰值
+  ├── 时序图：MLIR → pipe/event 时间线（结构性死锁判定）
+  └── （按需生长）
+```
+
+关键设计：**模型即数据**（描述进 git、可评审、带信任等级 provisional→cross-validated→anchored）、
+**引擎少而固定**（互检交叉验证：与主仓 C++ 链 / GraphSyncSolver / PlanMemory）、
+**缺口是合法结论**（`COVERAGE_GAP`/`UNTRUSTED_DESCRIPTION`，禁止静默误判）。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/requirements.md](docs/requirements.md) | 需求基线（FR/NFR/AC 编号体系） |
+| [docs/design-framework.md](docs/design-framework.md) | 方案框架与已定决策（D1–D4） |
+| [docs/industry-research.md](docs/industry-research.md) | 业界调研与决策依据（Sail/EDA/系统化并发测试/Rosette） |
+| [docs/milestone-plan.md](docs/milestone-plan.md) | 里程碑执行计划（M0–M4 任务分解） |
+
+## 路线图
+
+| 里程碑 | 交付 | 状态 |
+|---|---|---|
+| M0 | DSL 骨架：描述→静态检查→配置文档→装配 | 🚧 未开始 |
+| M1 | UB 占用图（首个 spec 工具） | 未开始 |
+| M2 | 时序图 + 结构性死锁判定 | 未开始 |
+| M3 | 等价验证（具体执行档） | 未开始 |
+| M4 | 符号档（z3）+ 候选性质 | 未开始 |
+
+## 与 AscendNPU-IR 的关系
+
+本项目面向 [AscendNPU-IR](https://github.com/Ascend/AscendNPU-IR) 的 HIVM 方言（Hybrid Intelligence Virtual Machine），
+作为**外部工具**通过其 Python bindings 对接，不侵入主仓；语义模型的交叉验证依赖主仓既有实现
+（ConvertHIVMToUpstream / GraphSyncSolver / PlanMemory）。
+
+## License
+
+[Apache License 2.0](LICENSE)
