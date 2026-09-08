@@ -12,7 +12,13 @@ import sys
 from pathlib import Path
 
 import pytest
-import tomllib
+
+# tomllib 自 Python 3.11 进入标准库；D7 的地板是 3.10，故需回退到 tomli。
+# 这与 numpy 约束是同一类缺陷（依赖-解释器耦合），同样由 CI py3.10 腿暴露。
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - 仅在 3.10 上执行
+    import tomli as tomllib
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

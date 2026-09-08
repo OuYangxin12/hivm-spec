@@ -25,6 +25,8 @@ dependencies = [
 test = [
     "pytest~=9.1",
     "hypothesis~=6.167",
+    # tomllib 自 3.11 起为标准库；3.10（D7 地板）需 tomli 回退（基线守卫测试用）。
+    "tomli~=2.2; python_version < '3.11'",
 ]
 dev = [
     "ruff~=0.14",
