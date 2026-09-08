@@ -10,7 +10,9 @@ import argparse
 import importlib.util
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from hivm_spec.vir import Access, Effect
 
 if TYPE_CHECKING:
     from hivm_spec.spec import Spec
@@ -41,6 +43,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_tool = sub.add_parser("tool", help="运行 spec 工具（M1+）")
     p_tool.add_argument("name", help="工具名，如 ub_occupancy / timeline / equivalence")
+    p_tool.add_argument("-c", "--config", default="config.json", help="配置文档（由 gen 产出）")
+    p_tool.add_argument("--json", metavar="PATH", help="把完整结论写为 JSON")
     # D12：输入恒为单份 IR；仅等价验证取两份（待验 + 锚点）。不接受 pass 序列——
     # 跨 pass 定位由 agent 对每份 dump 分别调用来编排（见 AGENTS.md §6）。
     p_tool.add_argument(
@@ -148,9 +152,103 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "gen":
         return _cmd_gen(args.description, args.output, args.timestamp)
 
-    print("PENDING(T1.x spec 工具装配) — 子命令 'tool' 的契约已定义，实现未落地。")
-    print("参见 docs/milestone-plan.md 对应任务；本命令不产出结论以避免误导。")
-    return EXIT_PENDING
+    return _cmd_tool(args.name, args.config, args.inputs, args.json)
+
+
+def _cmd_tool(name: str, config_path: str, inputs: list[str], json_out: str | None) -> int:
+    from hivm_spec.assemble import load_config, run_tool
+    from hivm_spec.bindings import BindingsError
+    from hivm_spec.ir_engine import lower_module_text
+
+    if name not in ("ub_occupancy",):
+        print(
+            f"PENDING(M2/M3) 工具 {name!r} 的契约已定义，实现未落地。本命令不产出结论以避免误导。",
+            file=sys.stderr,
+        )
+        return EXIT_PENDING
+
+    cfg_path = Path(config_path)
+    if not cfg_path.is_file():
+        print(
+            f"配置文档不存在：{cfg_path}。先运行 hivm-spec gen <描述> -o {cfg_path}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    config, spec_hash = load_config(cfg_path)
+
+    if len(inputs) != 1:
+        print(
+            f"ub_occupancy 恒吃一份 IR（D12），收到 {len(inputs)} 份。"
+            "跨 pass 定位请对每份 dump 分别调用。",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+
+    ir_path = Path(inputs[0])
+    if not ir_path.is_file():
+        print(f"IR 文件不存在：{ir_path}", file=sys.stderr)
+        return EXIT_FAIL
+
+    modeled = {op["op"] for op in config.get("ops", [])}
+    effects, pipes = _effects_from_config(config)
+
+    try:
+        lowered = lower_module_text(
+            ir_path.read_text(encoding="utf-8"),
+            modeled,
+            source=str(ir_path),
+            op_effects=effects,
+            op_pipes=pipes,
+            arch=config.get("arch", "a3"),
+        )
+    except BindingsError as exc:
+        # 环境问题必须与"IR 有问题"分开（FR7）
+        print(f"环境不可用，未能验证：{exc}", file=sys.stderr)
+        return EXIT_PENDING
+
+    for note in lowered.engine_notes:
+        print(f"引擎提示：{note}", file=sys.stderr)
+
+    result = run_tool(name, config, lowered.module, spec_hash)
+    print(result.render())
+
+    if json_out:
+        Path(json_out).write_bytes(result.to_json_bytes())
+        print(f"完整结论：{json_out}")
+
+    return result.exit_code
+
+
+def _effects_from_config(
+    config: dict[str, Any],
+) -> tuple[dict[str, tuple[Effect, ...]], dict[str, str]]:
+    """从配置文档重建引擎所需的效应表。
+
+    刻意从**配置文档**而非描述源文件重建：结论的审计坐标是 spec_hash（配置文档
+    的哈希），若运行时读源文件，就可能出现"结论声称基于某 spec_hash，实际用的是
+    改过的源文件"——审计链断裂。
+    """
+    access_map = {"read": Access.READ, "write": Access.WRITE, "cond_write": Access.WRITE}
+    effects: dict[str, tuple[Effect, ...]] = {}
+    pipes: dict[str, str] = {}
+    for op in config.get("ops", []):
+        items: list[Effect] = []
+        for eff in op.get("effects", []):
+            access = access_map.get(eff.get("kind", ""))
+            if access is None:
+                continue  # 同步效应走 VSync
+            items.append(
+                Effect(
+                    access=access,
+                    space=eff.get("space") or "@from_type",
+                    target=eff.get("target", ""),
+                )
+            )
+        if items:
+            effects[op["op"]] = tuple(items)
+        if op.get("pipe"):
+            pipes[op["op"]] = op["pipe"]
+    return effects, pipes
 
 
 if __name__ == "__main__":

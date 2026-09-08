@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -103,14 +104,31 @@ def test_every_entry_records_parse_verification(manifest: dict) -> None:
         assert e.get("parse_verified"), f"{e['path']} 未记录解析验证方式"
 
 
+#: lit 的负例指令形态：`// expected-error @+1 {{...}}`。
+#: 必须匹配**指令**而非裸词——散文里提到 "expected-error" 三个字不是负例。
+NEGATIVE_DIRECTIVE = re.compile(r"//\s*expected-(error|warning|remark|note)\s*[@{]")
+
+
 def test_no_negative_cases_in_corpus() -> None:
-    """负例（expected-error）属主仓 verifier 职责，不入本语料库（D13）。"""
+    """负例（expected-error 指令）属主仓 verifier 职责，不入本语料库（D13）。
+
+    判定用指令正则而非裸词匹配：`ub_overflow_injected.mlir` 的注释里需要说明
+    "本文件与负例不同"，若按裸词判定就会把这句解释误判为负例。
+    """
     offenders = [
         str(p.relative_to(CORPUS))
         for p in _corpus_files()
-        if "expected-error" in p.read_text(encoding="utf-8")
+        if NEGATIVE_DIRECTIVE.search(p.read_text(encoding="utf-8"))
     ]
     assert not offenders, f"语料库不应含负例：{offenders}"
+
+
+def test_negative_directive_regex_actually_matches_real_lit_syntax() -> None:
+    """守卫自身必须有效——否则它只是装饰。"""
+    assert NEGATIVE_DIRECTIVE.search("// expected-error @+1 {{bad}}")
+    assert NEGATIVE_DIRECTIVE.search("//expected-warning {{x}}")
+    # 散文提及不算
+    assert not NEGATIVE_DIRECTIVE.search("// 它与负例（expected-error）不同")
 
 
 def test_features_are_declared(manifest: dict) -> None:

@@ -226,6 +226,10 @@ class VAlloc:
     size_origin: SizeOrigin = SizeOrigin.UNKNOWN
     #: 原始 shape 文本（如 "4x16x16xf32" 或 "?x16xf16"），保真存档
     shape_text: str = ""
+    #: 该 alloc 结果的 SSA value 文本。生存期分析靠它把 buffer 与节点操作数
+    #: 精确关联——若改用"按出现顺序对齐"的近似，关联一旦错位，生存期就会算错，
+    #: 而错误方向不可控（可能低估峰值把溢出判成 OK）。
+    value: str = ""
 
     def __post_init__(self) -> None:
         if not self.name:
