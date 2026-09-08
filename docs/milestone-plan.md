@@ -36,8 +36,8 @@
 | T0.4 | 信任账本骨架：trust/provenance/`spec_hash`（sha256，定义见框架 §7.3）；覆盖报告（modeled/unmodeled）；**drift ledger 条目结构（D9）** | 账本随配置文档输出；漂移条目可登记 |
 | T0.5 | 生成 CLI：`hivm-spec gen <desc.py> -o config.json`（入口已在 pyproject 注册） | 端到端命令可用，替换当前 PENDING 返回 |
 | T0.6 | toy 描述：load/vadd/store + gm/ub + ub_occupancy check | 为 M1 提供输入；**spec-gate R1 转硬失败** |
-| T0.7 | 性质测试骨架：Hypothesis 注册表 + 示例（vadd 交换律） | 框架可运行、可扩展 |
-| T0.8 | 账本绊线首版：pytest 遍历 hivm 已注册 op vs 账本，未声明 op 报告（cmake/tablegen 集成后置） | 对全 122 op 输出覆盖报告 |
+| T0.7 ✅ | 性质测试骨架：Hypothesis 注册表 + 示例（vadd 交换律） | 框架可运行、可扩展 |
+| T0.8 ✅ | 账本绊线首版：pytest 遍历 hivm 已注册 op vs 账本，未声明 op 报告（cmake/tablegen 集成后置） | 对全量已注册 op 输出覆盖报告（实测 **114** 个，已建模 9） |
 
 > **M0 新增前置任务（架构审查 D6/D11/D13）**——须在 T0.1 之前完成：
 >
@@ -52,7 +52,7 @@
 
 | 任务 | 内容 | 验收 |
 |---|---|---|
-| T1.0 | **目标 kernel op 清点与 gap 分析**：cv-pipelining.mlir 的 hivm op 集合 vs 账本 → 建模工作清单（提前暴露 M2 的建模量） | 清单进账本，缺口有归属 |
+| T1.0 ✅ | **目标 kernel op 清点与 gap 分析**：cv-pipelining.mlir 的 hivm op 集合 vs 账本 → 建模工作清单（提前暴露 M2 的建模量） | 已完成，见 `docs/tasks/M1.md` §1：待建模 **9 个 op**，仅 `mmadL1` 需逃生舱 |
 | T1.1 | IR 接口引擎：解析 kernel、遍历函数体，**产出 VIR**（T0.0 契约；alloc/效应节点 + scf 结构标注）；不认识的结构落入 VIR `coverage` 并上报 `COVERAGE_GAP`；含 bindings bootstrap 模块（框架 §6 强制条款）+ `requires_bindings` 回归 | 两个目标 kernel VIR 正确；bootstrap 回归可跑 |
 | T1.2 | 生存期/峰值引擎：alloc→last use 区间（顺序语义）；per-space 曲线与峰值 | 与手算一致（小型样例） |
 | T1.3 | 尺寸策略：静态 shape 直读；动态维度经测试配置参数化；编译器尺寸标注存在则优先并记录来源 | 动态样例可用 |
