@@ -95,12 +95,38 @@ def test_spec_gate_script_runs() -> None:
 
 @pytest.mark.schema_golden
 def test_config_document_roundtrip_golden() -> None:
-    """OD9/FR8：配置文档 schema 往返 golden。
+    """OD9/FR8：配置文档 schema 往返 golden（T0.3 已落地，此测试已转实测）。
 
-    T0.3 落地后此测试转为实测（同一描述两次生成逐字节一致 + jsonschema 校验 +
-    golden 比对）。当前显式 skip 并带任务号，符合"禁止静默跳过"约定。
+    三重断言：① 与 golden 逐字节一致；② 通过 jsonschema；③ 重新生成仍一致。
+    golden 变动即意味着描述语义或归一化规则改变，必须在 PR 中被看见——
+    这是"判定依据不可静默改变"（FR6）在生成侧的落点。
     """
-    pytest.importorskip("hivm_spec.generator", reason="PENDING(T0.3) 生成器未实现")
+    import importlib.util
+
+    from hivm_spec.generate import generate, validate_config
+
+    golden = REPO_ROOT / "tests" / "golden" / "toy_config.json"
+    assert golden.is_file(), "golden 配置文档缺失"
+
+    toy = REPO_ROOT / "specs" / "toy.py"
+    spec_obj = importlib.util.spec_from_file_location("toy_golden", toy)
+    assert spec_obj and spec_obj.loader
+    mod = importlib.util.module_from_spec(spec_obj)
+    spec_obj.loader.exec_module(mod)
+
+    result = generate(mod.spec, timestamp="2026-09-09T00:00:00+00:00")
+
+    assert result.config_bytes == golden.read_bytes(), (
+        "配置文档与 golden 不一致：若为有意的语义/归一化变更，请重新生成 golden "
+        "并在 PR 中说明；否则即为意外漂移"
+    )
+    assert validate_config(result.config) in (
+        [],
+        ["jsonschema 不可用（环境问题，非配置错误）"],
+    )
+    assert generate(mod.spec, timestamp="2026-09-09T00:00:00+00:00").config_bytes == (
+        result.config_bytes
+    )
 
 
 def test_d12_single_ir_contract_is_documented() -> None:

@@ -31,6 +31,7 @@ test = [
 dev = [
     "ruff~=0.14",
     "mypy~=1.18",
+    "types-jsonschema~=4.25",
 ]
 # IR 接口层：需要主仓 bishengir bindings（cp310 ABI，不在 PyPI）。
 # 安装方式见 docs/milestone-plan.md §1 V1 记录；CI 无法提供，相应测试以
