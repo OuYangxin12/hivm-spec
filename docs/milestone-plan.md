@@ -52,7 +52,7 @@
 
 | 任务 | 内容 | 验收 |
 |---|---|---|
-| T1.0 | **目标 kernel op 清点与 gap 分析**：cv-pipelining.mlir 的 hivm op 集合 vs 账本 → 建模工作清单（提前暴露 M2 的建模量） | 清单进账本，缺口有归属 |
+| T1.0 ✅ | **目标 kernel op 清点与 gap 分析**：cv-pipelining.mlir 的 hivm op 集合 vs 账本 → 建模工作清单（提前暴露 M2 的建模量） | 已完成，见 `docs/tasks/M1.md` §1：待建模 **9 个 op**，仅 `mmadL1` 需逃生舱 |
 | T1.1 | IR 接口引擎：解析 kernel、遍历函数体，**产出 VIR**（T0.0 契约；alloc/效应节点 + scf 结构标注）；不认识的结构落入 VIR `coverage` 并上报 `COVERAGE_GAP`；含 bindings bootstrap 模块（框架 §6 强制条款）+ `requires_bindings` 回归 | 两个目标 kernel VIR 正确；bootstrap 回归可跑 |
 | T1.2 | 生存期/峰值引擎：alloc→last use 区间（顺序语义）；per-space 曲线与峰值 | 与手算一致（小型样例） |
 | T1.3 | 尺寸策略：静态 shape 直读；动态维度经测试配置参数化；编译器尺寸标注存在则优先并记录来源 | 动态样例可用 |
