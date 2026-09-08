@@ -43,20 +43,39 @@ spec 工具（统一契约：吃 MLIR，吐结构化结论/视图）
 
 | 文档 | 内容 |
 |---|---|
-| [docs/requirements.md](docs/requirements.md) | 需求基线（FR/NFR/AC 编号体系） |
-| [docs/design-framework.md](docs/design-framework.md) | 方案框架与已定决策（D1–D4） |
+| [docs/requirements.md](docs/requirements.md) | 需求基线（FR/NFR/AC 编号体系；§6 未决问题处置状态） |
+| [docs/design-framework.md](docs/design-framework.md) | 方案框架与已定决策（D1–D11）、VIR 契约（§6.1）、漂移流程（§8.1）、审查台账（§13） |
 | [docs/industry-research.md](docs/industry-research.md) | 业界调研与决策依据（Sail/EDA/系统化并发测试/Rosette） |
-| [docs/milestone-plan.md](docs/milestone-plan.md) | 里程碑执行计划（M0–M4 任务分解） |
+| [docs/milestone-plan.md](docs/milestone-plan.md) | 里程碑执行计划（M0–M4 任务分解）与工程约定 |
+| [AGENTS.md](AGENTS.md) | agent 工作规约：spec-gate 门禁、描述治理纪律、架构不可违约束 |
 
 ## 路线图
 
 | 里程碑 | 交付 | 状态 |
 |---|---|---|
-| M0 | DSL 骨架：描述→静态检查→配置文档→装配 | 🚧 未开始 |
+| 前置门禁 | V1 hivm 方言解析 / V2 环境依赖 | ✅ 已通过 |
+| 工程基线 | CI 四门禁 + spec-gate + 双层版本策略（D5/D7） | ✅ 已落地 |
+| M0 | VIR 契约（T0.0）+ 语法 spike（T0.0b）+ DSL 骨架：描述→静态检查→配置文档→装配 | 🚧 进行中 |
 | M1 | UB 占用图（首个 spec 工具） | 未开始 |
 | M2 | 时序图 + 结构性死锁判定 | 未开始 |
-| M3 | 等价验证（具体执行档） | 未开始 |
+| M3 | 等价验证（具体执行档）— 含不可裁剪内核（D8） | 未开始 |
 | M4 | 符号档（z3）+ 候选性质 | 未开始 |
+
+## 开发
+
+```bash
+# 环境（uv；~/.cache 只读时需重定向缓存）
+export UV_CACHE_DIR=/tmp/uvcache
+uv pip install -e ".[test,dev]"
+
+# 提交前本地预检（与 CI 等价）
+ruff check . && ruff format --check . && mypy src
+pytest -m "not requires_bindings" -q
+python scripts/spec_gate.py --base origin/main --head HEAD
+```
+
+核心层为纯 Python（`>=3.10`），不依赖主仓 bindings；IR 接口层需 bishengir bindings
+（**cp310 ABI**），其测试标记 `requires_bindings`，在无绑定环境下跳过并登记为覆盖缺口（D7）。
 
 ## 与 AscendNPU-IR 的关系
 

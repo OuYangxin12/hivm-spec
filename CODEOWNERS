@@ -1,0 +1,25 @@
+# CODEOWNERS — 评审归属（OD4 描述治理）
+#
+# 单人阶段：所有条目归项目所有者，PR 免人工审批但机器门禁（CI spec-gate）
+# 不可绕过（D5）。多协作者接入后按段收紧，语义描述与决策文档应优先要求
+# 独立评审——它们是 FR6 防自欺的信任根。
+#
+# 每个文件只有最后一条匹配规则生效。
+
+* @OuYangxin12
+
+# --- 信任根：语义描述库与对拍证据（OD4/OD11）---
+# 描述变更直接改变验证结论的判定依据，是防自欺的关键面。
+/specs/ @OuYangxin12
+/specs/cases/ @OuYangxin12
+
+# --- 决策与需求基线：变更即架构变更 ---
+/docs/design-framework.md @OuYangxin12
+/docs/requirements.md @OuYangxin12
+/docs/milestone-plan.md @OuYangxin12
+
+# --- 门禁本身：防自欺链条的最后一环 ---
+# 允许放松门禁的人 = 能绕过防自欺的人，故与描述同级看护。
+/.github/workflows/ @OuYangxin12
+/scripts/spec_gate.py @OuYangxin12
+/AGENTS.md @OuYangxin12

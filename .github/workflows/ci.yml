@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 门禁 1：静态质量。agent 产码项目的人评审带宽最稀缺，机械检查前置。
+  lint:
+    name: lint + types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[test,dev]"
+      - name: Ruff (lint)
+        run: ruff check .
+      - name: Ruff (format)
+        run: ruff format --check .
+      - name: Mypy
+        run: mypy src
+
+  # 门禁 2：核心引擎测试。核心为纯 Python，不 import bishengir 绑定（D7）。
+  # 矩阵下界 3.10 = cp310 绑定 ABI 强制的地板，不是偏好。
+  core:
+    name: core (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install -e ".[test]"
+      - name: Pytest (bindings-free subset)
+        run: pytest -m "not requires_bindings" -q
+
+  # 门禁 3：配置文档 schema 往返 golden（D2/OD9 的 FR8 落点）。
+  # T0.3 未落地前该 job 报 PENDING 而非静默绿；见 AGENTS.md「skip 必须带任务号」。
+  schema-golden:
+    name: schema roundtrip golden
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[test]"
+      - name: Schema golden
+        run: pytest -m schema_golden -q -rs
+
+  # 门禁 4：spec-gate（FR6 防自欺的机制化）。
+  # 描述变更 → 强制跑对拍集；trust 升级 → 强制附对拍证据（OD4）。
+  spec-gate:
+    name: spec-gate (description governance)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[test]"
+      - name: Spec gate
+        run: |
+          python scripts/spec_gate.py \
+            --base "${{ github.event.pull_request.base.sha || github.event.before }}" \
+            --head "${{ github.event.pull_request.head.sha || github.sha }}"
