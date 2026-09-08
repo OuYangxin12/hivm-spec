@@ -19,6 +19,7 @@ from hivm_spec.ir_engine import (
     ELEM_BYTES,
     SYNC_KINDS,
     IREngine,
+    LowerResult,
     _nbytes_of,
     _parse_loc,
     _space_of,
@@ -29,6 +30,43 @@ from hivm_spec.vir import Loc, SizeOrigin, SyncKind, VLoop, VModule, VNode, VReg
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS = REPO_ROOT / "specs" / "cases" / "corpus"
 TOY = REPO_ROOT / "specs" / "toy.py"
+
+
+def _lower(ir: pathlib.Path) -> LowerResult:
+    """把语料文件降级为 VIR（用 toy 描述）。"""
+    import importlib.util
+
+    from hivm_spec.ir_engine import effects_from_spec, lower_module_text
+
+    so = importlib.util.spec_from_file_location("toy_spec", TOY)
+    assert so and so.loader
+    mod = importlib.util.module_from_spec(so)
+    so.loader.exec_module(mod)
+    effects, pipes = effects_from_spec(mod.spec)
+    modeled = {o.op for o in mod.spec.ops}
+    return lower_module_text(
+        ir.read_text(encoding="utf-8"),
+        modeled,
+        source=ir.name,
+        op_effects=effects,
+        op_pipes=pipes,
+    )
+
+
+def _region_kinds(module: VModule) -> list[str]:
+    """递归收集所有区域的 kind。"""
+    from hivm_spec.vir import VRegion
+
+    out: list[str] = []
+
+    def walk(items: object) -> None:
+        for it in items:  # type: ignore[attr-defined]
+            if isinstance(it, VRegion):
+                out.append(it.kind)
+                walk(it.items)
+
+    walk(module.items)
+    return out
 
 
 def _toy_spec() -> object:
@@ -440,3 +478,85 @@ def test_tool_result_is_reproducible(tmp_path: pathlib.Path) -> None:
     main(["tool", "ub_occupancy", "-c", str(cfg), str(ir), "--json", str(a)])
     main(["tool", "ub_occupancy", "-c", str(cfg), str(ir), "--json", str(b)])
     assert a.read_bytes() == b.read_bytes()
+
+
+@requires_bindings
+@pytest.mark.skipif(not bindings_available(), reason="PENDING(env) bindings 不可用")
+def test_nested_builtin_module_is_traversed() -> None:
+    """带属性的内层 `module` 必须下钻。
+
+    回归：主仓语料常见 `module attributes {dlti.target_system_spec = ...}`
+    包裹真正内容。`builtin.module` 原不在 REGION_KINDS 中，导致整个内层
+    module 的全部函数被**静默跳过**——实测该文件的 3 个 func 全不可见，
+    引擎却仍产出结论（VIR 为空、指纹是空串哈希）。
+    """
+    ir = CORPUS / "l1" / "hivm-insert-nz2nd-for-debug.mlir"
+    lowered = _lower(ir)
+    assert lowered.module.items, "内层 module 未被下钻，VIR 为空"
+    assert lowered.module.node_order(), "应至少解出若干 hivm 节点"
+    # 该文件含 2 个真实 func（各在一个内层 module 内）
+    kinds = _region_kinds(lowered.module)
+    assert kinds.count("func") == 2, f"应见到 2 个 func（第 3 处是 CHECK 注释），实见 {kinds}"
+
+
+@requires_bindings
+@pytest.mark.skipif(not bindings_available(), reason="PENDING(env) bindings 不可用")
+def test_unannotated_alloc_is_reported_not_silently_dropped() -> None:
+    """无 address_space 标注的 alloc 不得静默丢弃（FR4）。
+
+    它通常是 host 侧内存，但若其实是片上 buffer 而标注缺失，占用就会被
+    低估。必须登记缺口让人判断。
+    """
+    ir = CORPUS / "l1" / "hivm-insert-nz2nd-for-debug.mlir"
+    lowered = _lower(ir)
+    details = [g.detail for g in lowered.module.coverage.gaps]
+    assert any("无 #hivm.address_space 标注" in d for d in details), (
+        f"未标注 alloc 应登记缺口，实际缺口：{details[:5]}"
+    )
+    assert any("低估" in d for d in details), "须说明后果（占用被低估）"
+
+
+@requires_bindings
+@pytest.mark.skipif(not bindings_available(), reason="PENDING(env) bindings 不可用")
+def test_func_arg_onchip_buffers_are_captured() -> None:
+    """函数参数形态的片上 buffer 必须登记为 FUNC_ARG。
+
+    回归：`annotate-vf-alias.mlir` 的 3 个 UB buffer 全是函数参数，
+    漏掉后该 kernel 的 UB 占用被算作 0 并给出 OK。
+    """
+    from hivm_spec.vir import AllocOrigin
+
+    ir = CORPUS / "l1" / "annotate-vf-alias.mlir"
+    lowered = _lower(ir)
+    ub = [a for a in lowered.module.allocs if a.space == "ub"]
+    assert len(ub) == 3, f"应捕获 3 个 UB 函数参数，实得 {len(ub)}"
+    assert all(a.origin is AllocOrigin.FUNC_ARG for a in ub)
+    assert all(a.nbytes == 256 for a in ub), "64xf32 = 256B"
+
+
+@requires_bindings
+@pytest.mark.skipif(not bindings_available(), reason="PENDING(env) bindings 不可用")
+def test_no_l1_case_yields_a_vacuous_ok(tmp_path: pathlib.Path) -> None:
+    """L1 全量：任何 OK 结论都必须真的分析到了 buffer。
+
+    这是本轮最重要的一条守卫——"空洞 OK"是最危险的假阴性，因为它看起来
+    与"确实安全"完全一样。
+    """
+    import json
+
+    from hivm_spec.__main__ import main
+
+    cfg = tmp_path / "config.json"
+    assert main(["gen", str(TOY), "-o", str(cfg)]) == 0
+
+    checked = 0
+    for ir in sorted((CORPUS / "l1").glob("*.mlir")):
+        out = tmp_path / f"{ir.stem}.json"
+        main(["tool", "ub_occupancy", "-c", str(cfg), str(ir), "--json", str(out)])
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        checked += 1
+        if doc["verdict"] != "OK":
+            continue
+        buffers = sum(s["buffers"] for s in doc["details"]["spaces"].values())
+        assert buffers > 0, f"{ir.name} 给出 OK 但一个 buffer 都没分析到——这是空洞结论"
+    assert checked >= 10, f"L1 语料应 ≥10 份，实测 {checked}"

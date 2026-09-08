@@ -410,3 +410,124 @@ def test_trust_reflects_highest_declared_level() -> None:
     m = _module((_node("n1", "%a"),), (_alloc("A", 1024, "%a"),))
     r = run_ub_occupancy(cfg, m, "sha256:x")
     assert r.trust == "cross-validated"
+
+
+# ---------------------------------------------------------------------------
+# L1 实跑暴露的四个真实缺陷（回归防线）
+# ---------------------------------------------------------------------------
+
+
+def test_check_options_key_matches_generator_output() -> None:
+    """配置文档里 check 参数的键是 `options`，不是 `params`。
+
+    回归：assemble 原先读 `params`，而生成器写 `options`，导致
+    `spaces_of_interest` 恒为空，静默退化为"分析恰好存在的 alloc 所属空间"。
+    这类键名不一致不会报错，只会让配置**静默失效**。
+    """
+    from hivm_spec.generate import generate
+    from hivm_spec.spec import Spec
+
+    sp = Spec(name="t", arch="a3")
+    sp.space("ub", capacity=UB)
+    sp.check("ub_occupancy", spaces=["ub"])
+    doc = generate(sp, timestamp="2026-01-01T00:00:00+00:00").config
+    check = next(c for c in doc["checks"] if c["name"] == "ub_occupancy")
+    assert "options" in check, "生成器写的键名变了，assemble 必须同步"
+    assert check["options"]["spaces"] == ["ub"]
+
+
+def test_declared_spaces_are_analyzed_even_without_buffers() -> None:
+    """描述声明要查的 space，即使没有 buffer 也必须出现在结果里。
+
+    否则"没查到问题"与"没查"无法区分。
+    """
+    cfg = json.loads(json.dumps(CONFIG))
+    cfg["vm"]["spaces"].append({"name": "cbuf", "capacity": 512 * 1024})
+    cfg["checks"][0]["options"] = {"spaces": ["ub", "cbuf"]}
+    del cfg["checks"][0]["params"]
+    m = _module((_node("n1", "%a"),), (_alloc("A", 1024, "%a"),))
+    r = run_ub_occupancy(cfg, m, "sha256:x")
+    assert set(r.details["spaces"]) == {"ub", "cbuf"}
+
+
+def test_vacuous_ok_is_rejected() -> None:
+    """零 buffer 的"未溢出"必须降级为 COVERAGE_GAP。
+
+    回归：`annotate-vf-alias.mlir` 曾拿到干净的 OK——它的 3 个 UB buffer 是
+    函数参数而非 memref.alloc，工具什么都没分析却给了绿灯。这是最危险的
+    一类假阴性：结论看起来是"安全"，实际是"无知"。
+    """
+    m = _module((_node("n1"),), ())  # 有节点，无 buffer
+    r = run_ub_occupancy(CONFIG, m, "sha256:x")
+    assert r.verdict is Verdict.COVERAGE_GAP
+    assert any("未能分析" in d.message for d in r.diagnostics)
+
+
+def test_func_arg_buffers_are_counted_and_live_whole_function() -> None:
+    """函数参数形态的片上 buffer 必须计入，且生存期覆盖全函数。
+
+    它们由调用方分配，本函数是否访问都占着空间。
+    """
+    from hivm_spec.vir import AllocOrigin
+
+    arg = VAlloc(
+        name="arg0",
+        space="ub",
+        loc=LOC,
+        nbytes=256,
+        size_origin=SizeOrigin.STATIC_SHAPE,
+        shape_text="64xf32",
+        value="%arg0",
+        origin=AllocOrigin.FUNC_ARG,
+    )
+    # 刻意让节点不访问该参数：仍须计入
+    m = _module((_node("n1", "%other"), _node("n2", "%other")), (arg,))
+    occ = analyze_occupancy(m, {"ub": UB}, spaces_of_interest=("ub",))
+    so = occ.spaces["ub"]
+    assert so.peak_bytes == 256
+    iv = so.intervals[0]
+    assert (iv.start, iv.end) == (0, 1), "函数参数生存期应覆盖全函数"
+    assert not iv.never_used, "函数参数不应被报为『未见访问』"
+    # 也不该产生"死代码"缺口
+    assert not any("死代码" in d for _, d, _ in occ.gap_notes)
+
+
+def test_buffers_counted_even_when_module_has_no_hivm_nodes() -> None:
+    """全 vector.* 的 kernel（零 hivm 节点）仍须统计其 buffer。
+
+    回归：曲线按节点数构造，节点数为 0 时曲线为空、峰值停留在 0，
+    768B 的真实占用被报成 0。
+    """
+    from hivm_spec.vir import AllocOrigin
+
+    args = tuple(
+        VAlloc(
+            name=f"arg{i}",
+            space="ub",
+            loc=LOC,
+            nbytes=256,
+            size_origin=SizeOrigin.STATIC_SHAPE,
+            value=f"%arg{i}",
+            origin=AllocOrigin.FUNC_ARG,
+        )
+        for i in range(3)
+    )
+    m = _module((), args)  # 零节点
+    occ = analyze_occupancy(m, {"ub": UB}, spaces_of_interest=("ub",))
+    so = occ.spaces["ub"]
+    assert so.peak_bytes == 768, f"应为 768B，实为 {so.peak_bytes}"
+    assert len(so.peak_contributors) == 3
+    assert not so.is_vacuous
+
+
+def test_is_vacuous_distinguishes_no_buffers_from_zero_peak() -> None:
+    """「没有 buffer」与「峰值为 0」是两件事。"""
+    empty = _module((_node("n1"),), ())
+    occ = analyze_occupancy(empty, {"ub": UB}, spaces_of_interest=("ub",))
+    assert occ.spaces["ub"].is_vacuous
+    assert occ.is_vacuous
+
+    with_buf = _module((_node("n1", "%a"),), (_alloc("A", 1024, "%a"),))
+    occ2 = analyze_occupancy(with_buf, {"ub": UB}, spaces_of_interest=("ub",))
+    assert not occ2.spaces["ub"].is_vacuous
+    assert not occ2.is_vacuous

@@ -18,6 +18,7 @@ from typing import Any
 
 from hivm_spec.vir import (
     Access,
+    AllocOrigin,
     Coverage,
     Effect,
     Gap,
@@ -73,7 +74,13 @@ SYNC_KINDS = {
 }
 
 #: 控制流 op → VRegion.kind
+#:
+#: `builtin.module` 必须在列：主仓语料常见"带属性的内层 module"（如
+#: `module attributes {dlti.target_system_spec = ...}`），若不下钻，整个内层
+#: module 的全部函数会被**静默跳过**——实测 hivm-insert-nz2nd-for-debug.mlir
+#: 的 3 个 func 因此全部不可见，工具却仍给出结论。
 REGION_KINDS = {
+    "builtin.module": "module",
     "scf.for": "for",
     "scf.while": "while",
     "scf.if": "if",
@@ -213,6 +220,12 @@ class IREngine:
     def _build_region(self, op: Any, kind: str, source: str) -> VRegion:
         loc = _parse_loc(str(op.location), source)
         rid = self._next_id("r")
+
+        # 函数参数形态的片上 buffer 必须登记：它们同样占用空间，只是由调用方
+        # 分配。忽略它们会造成假阴性（实测 annotate-vf-alias.mlir 的 3 个 UB
+        # buffer 全是函数参数，漏掉后该 kernel 占用被算作 0 并给出 OK）。
+        if kind == "func":
+            self._record_func_args(op, loc)
 
         # 单一 items 序列保持**程序序**：节点与子区域按出现顺序交错。
         # 分成两个列表会丢失相对位置，M2 的顺序判定就会失真。
@@ -369,6 +382,52 @@ class IREngine:
             out.append(Effect(access=eff.access, space=space, target=eff.target, nbytes=nbytes))
         return tuple(out)
 
+    def _record_func_args(self, op: Any, loc: Loc) -> None:
+        """把 memref 类型的函数参数登记为 FUNC_ARG 来源的 VAlloc。
+
+        只登记带 `#hivm.address_space` 标注的参数：无标注的 memref 通常是
+        host 侧内存或未指定空间，不参与片上占用判定。
+        """
+        try:
+            regions = list(op.operation.regions)
+            if not regions:
+                return
+            blocks = list(regions[0].blocks)
+            if not blocks:
+                return
+            args = list(blocks[0].arguments)
+        except (AttributeError, IndexError):
+            return
+
+        for arg in args:
+            type_str = str(arg.type)
+            space = _space_of(type_str)
+            if not space:
+                continue
+            nbytes, origin, shape_text = _nbytes_of(type_str)
+            name = self._next_id("arg")
+            if origin is SizeOrigin.UNKNOWN:
+                self._gaps.append(
+                    Gap(
+                        kind=GapKind.UNKNOWN_SIZE,
+                        detail=f"函数参数 buffer {name}（{shape_text or type_str}）"
+                        "尺寸无法静态确定",
+                        loc=loc,
+                    )
+                )
+            self._allocs.append(
+                VAlloc(
+                    name=name,
+                    space=space,
+                    loc=loc,
+                    nbytes=nbytes,
+                    size_origin=origin,
+                    shape_text=shape_text,
+                    value=str(arg),
+                    origin=AllocOrigin.FUNC_ARG,
+                )
+            )
+
     def _record_alloc(self, op: Any, loc: Loc) -> None:
         try:
             result_type = str(op.operation.results[0].type)
@@ -382,9 +441,23 @@ class IREngine:
             )
             return
 
-        space = _space_of(result_type) or "unknown"
+        space = _space_of(result_type)
         nbytes, origin, shape_text = _nbytes_of(result_type)
         name = self._next_id("buf")
+
+        if not space:
+            # 无 #hivm.address_space 标注：通常是 host/未指定空间的 memref，
+            # 不参与片上占用。但**不能静默丢弃**——若它其实是片上 buffer 而
+            # 只是标注缺失，占用就会被低估。登记缺口让人来判断（FR4）。
+            space = "unannotated"
+            self._gaps.append(
+                Gap(
+                    kind=GapKind.UNRECOGNIZED_STRUCTURE,
+                    detail=f"alloc {name}（{result_type}）无 #hivm.address_space 标注，"
+                    "未计入任何片上空间的占用；若它实为片上 buffer，占用将被低估",
+                    loc=loc,
+                )
+            )
 
         if origin is SizeOrigin.UNKNOWN:
             self._gaps.append(

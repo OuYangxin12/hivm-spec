@@ -330,6 +330,19 @@ MLIR 文本 ──[IR 接口引擎]──► VIR ──┬──► 占用/生�
 - **回归防线**：`test_program_order_interleaves_nodes_and_subregions`（手写 VIR）+
   `test_program_order_matches_source_line_order_on_real_ir`（真实 IR 上断言行号递增）。
 
+**空洞结论的防线（T1.4 实测补强）**：工具**不得**在"未分析到任何对象"时给出 `OK`。
+
+实测 `annotate-vf-alias.mlir` 曾拿到干净的 `OK`——该 kernel 的 3 个 UB buffer
+是 `func.func` 参数而非 `memref.alloc`，引擎一个都没捕获，占用被算作 0。
+"安全"与"无知"的外观完全相同，这是本框架最该防的假阴性。故：
+
+| 情形 | 判定 |
+|---|---|
+| 被检查的 space 中零 buffer | `COVERAGE_GAP`，且明说"不代表不溢出，而代表未能分析" |
+| buffer 尺寸未知 | 计入缺口；峰值仅为**下界** |
+| 容量未知 | `COVERAGE_GAP`（不可拿"不知道"换"没问题"） |
+| 片上 buffer 来源 | 区分 `LOCAL_ALLOC` 与 `FUNC_ARG`；后者生存期覆盖全函数 |
+
 **版本化**：VIR 为内部契约，不承诺对外稳定；但破坏性变更须同步更新全部消费引擎，且在本节记录变更理由（避免退化为各引擎私有分支）。
 
 ### 6.2 bindings 获取与本地可用性（T1.1 实测）
