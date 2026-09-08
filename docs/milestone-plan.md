@@ -21,6 +21,11 @@
 | V2 | 环境与依赖：Python 版本、numpy/hypothesis/jsonschema 可安装（含离线约束确认） | 依赖声明入 requirements，可复现安装 | 与构建系统集成（cmake FindPython） |
 | V3 | 代码落位【已定】：本仓库为独立项目——引擎/DSL 入 `src/hivm_spec/`，描述库 `specs/`，对拍用例 `specs/cases/`；与 AscendNPU-IR 以 Python bindings 环境依赖对接，不侵入主仓 | 目录已建 | — |
 
+### 门禁核实结果（首个执行记录）
+
+- **V2 ✅ 通过**：Python 3.14.4（系统解释器）；依赖经 uv 装入 `.venv`：numpy 2.5.3 / jsonschema 4.26.0 / hypothesis 6.167.1 / pytest 9.1.1（cp314 轮子可用，venv 基于系统解释器可长期使用）。环境备注：系统无 pip/ensurepip、`~/.cache` 只读，已用 uv 用户态安装并将缓存重定向 `/tmp`。
+- **V1 ⚠️ 受阻，待定解法**：系统无 AscendNPU-IR 构建产物（无 python bindings、无 bishengir-opt）；PyPI 无可用 MLIR 绑定（`mlir`/`mlir-python-bindings` 均为 0.0.1 占位包，torch-mlir 无 cp314 轮子）。源码构建可行性已核实（cmake 4.2.3 / ninja / clang 在位、24 核、855G 空闲，预计 1–2h，含子模块克隆 ~1.5GB）。处置选项：A 沙箱内源码构建（顺带获得 bishengir-opt，利于 T1.0 gap 分析）；B 用户提供既有构建产物；C 暂缓 V1 先行 M0 T0.1–T0.7（无 bindings 依赖），V1 就绪后补 T0.8/T1.1。
+
 ## 2. M0：DSL 骨架
 
 | 任务 | 内容 | 验收 |
