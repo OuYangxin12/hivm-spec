@@ -251,10 +251,36 @@ def test_cli_reports_broken_description_readably(
     assert "RuntimeError" in capsys.readouterr().err
 
 
-def test_cli_tool_still_reports_pending(capsys: pytest.CaptureFixture[str]) -> None:
-    """未实现阶段必须显式 PENDING，不得假成功（FR7）。"""
-    assert main(["tool", "ub_occupancy", "x.mlir"]) == EXIT_PENDING
-    assert "PENDING" in capsys.readouterr().out
+def test_cli_unimplemented_tools_still_report_pending(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """未实现的工具必须显式 PENDING，不得假成功（FR7）。
+
+    T1.6 起 ub_occupancy 已实现，故此处改测 timeline/equivalence——
+    它们的契约已定义而实现属 M2/M3。
+    """
+    for tool in ("timeline", "equivalence"):
+        assert main(["tool", tool, "x.mlir"]) == EXIT_PENDING
+        assert "PENDING" in capsys.readouterr().err
+
+
+def test_cli_tool_reports_missing_config_actionably(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """缺配置文档时要给出可执行的下一步，而非只说"失败"。"""
+    assert main(["tool", "ub_occupancy", "-c", "/nonexistent.json", "x.mlir"]) == EXIT_FAIL
+    assert "hivm-spec gen" in capsys.readouterr().err
+
+
+def test_cli_tool_enforces_single_ir_input(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D12：占用工具恒吃一份 IR。"""
+    cfg = tmp_path / "c.json"
+    main(["gen", str(TOY), "-o", str(cfg), "--timestamp", FIXED_TS])
+    rc = main(["tool", "ub_occupancy", "-c", str(cfg), "a.mlir", "b.mlir"])
+    assert rc == EXIT_FAIL
+    assert "恒吃一份 IR" in capsys.readouterr().err
 
 
 def test_toy_spec_is_importable_and_clean() -> None:

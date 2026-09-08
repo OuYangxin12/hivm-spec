@@ -57,6 +57,20 @@
       "notes": "嵌套区域遍历顺序约定"
     },
     {
+      "path": "l0/ub_overflow_injected.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "sha256": "sha256:4b212c7434fcfedf159360375410000d5cffbe35268ccf03923193507f8f5aa7",
+      "features": [
+        "static_shape",
+        "ub_overflow",
+        "injected_defect",
+        "overlapping_lifetime"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "AC1 溢出维的回归载体：两个 256KB buffer 生存期重叠、UB 容量 192KB，峰值 512KB 必然溢出。语法完全合法且严格解析通过，违反的是**语义**约束——正是 FileCheck 抓不到而 spec 工具该抓的缺陷。"
+    },
+    {
       "path": "l0/unmodeled_op.mlir",
       "layer": "l0",
       "origin": "handwritten",

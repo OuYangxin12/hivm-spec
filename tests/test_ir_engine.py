@@ -366,3 +366,77 @@ def test_parse_does_not_allow_unregistered_dialects() -> None:
         handle.parse_module(
             'module { func.func @f() { "totally.made_up_op"() : () -> (); return } }'
         )
+
+
+@requires_bindings
+@pytest.mark.skipif(not bindings_available(), reason="PENDING(env) bindings 不可用")
+def test_ac1_injected_overflow_is_detected_end_to_end(tmp_path: pathlib.Path) -> None:
+    """AC1 溢出维的端到端回归：注入缺陷必须被检出。
+
+    这是 M1 最重要的一条测试——它验证的不是某个函数，而是**整条链路**
+    （描述 → 配置文档 → IR 降级 → 占用分析 → verdict）确实能发现真实缺陷。
+    """
+    import json
+
+    from hivm_spec.__main__ import main
+
+    cfg = tmp_path / "config.json"
+    assert main(["gen", str(TOY), "-o", str(cfg)]) == 0
+
+    ir = CORPUS / "l0" / "ub_overflow_injected.mlir"
+    out = tmp_path / "result.json"
+    rc = main(["tool", "ub_occupancy", "-c", str(cfg), str(ir), "--json", str(out)])
+
+    assert rc == 1, "溢出必须以退出码 1 报出（与缺口的 4 区分）"
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["verdict"] == "OVERFLOW"
+
+    ub = doc["details"]["spaces"]["ub"]
+    assert ub["peak_bytes"] == 512 * 1024, f"峰值应为 512KB，实为 {ub['peak_bytes']}"
+    assert ub["capacity"] == 192 * 1024
+    assert ub["headroom"] < 0
+    # 贡献者排序是 FR5 可操作性的落点
+    assert len(ub["contributors"]) == 2
+    assert all(c["nbytes"] == 256 * 1024 for c in ub["contributors"])
+    # 信任降级必须随结论输出
+    assert doc["trust"] == "provisional"
+    # 审计坐标三件套
+    assert doc["spec_hash"] and doc["engine_version"] and doc["ir_fingerprint"]
+
+
+@requires_bindings
+@pytest.mark.skipif(not bindings_available(), reason="PENDING(env) bindings 不可用")
+def test_clean_corpus_does_not_false_alarm(tmp_path: pathlib.Path) -> None:
+    """干净语料不得误报溢出——误报会让工具迅速失去信任。"""
+    import json
+
+    from hivm_spec.__main__ import main
+
+    cfg = tmp_path / "config.json"
+    main(["gen", str(TOY), "-o", str(cfg)])
+
+    ir = CORPUS / "l0" / "loop_load_add_store.mlir"
+    out = tmp_path / "r.json"
+    rc = main(["tool", "ub_occupancy", "-c", str(cfg), str(ir), "--json", str(out)])
+
+    assert rc == 0
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["verdict"] == "OK"
+    # 两个 256xf32 buffer = 1KB each，生存期重叠 → 2KB，远低于 192KB
+    assert doc["details"]["spaces"]["ub"]["peak_bytes"] == 2048
+
+
+@requires_bindings
+@pytest.mark.skipif(not bindings_available(), reason="PENDING(env) bindings 不可用")
+def test_tool_result_is_reproducible(tmp_path: pathlib.Path) -> None:
+    """FR8：同一输入两次运行得逐字节相同的结论。"""
+    from hivm_spec.__main__ import main
+
+    cfg = tmp_path / "config.json"
+    main(["gen", str(TOY), "-o", str(cfg), "--timestamp", "2026-01-01T00:00:00+00:00"])
+    ir = CORPUS / "l0" / "ub_overflow_injected.mlir"
+
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    main(["tool", "ub_occupancy", "-c", str(cfg), str(ir), "--json", str(a)])
+    main(["tool", "ub_occupancy", "-c", str(cfg), str(ir), "--json", str(b)])
+    assert a.read_bytes() == b.read_bytes()

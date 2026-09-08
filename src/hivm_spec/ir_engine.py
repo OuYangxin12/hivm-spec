@@ -372,6 +372,7 @@ class IREngine:
     def _record_alloc(self, op: Any, loc: Loc) -> None:
         try:
             result_type = str(op.operation.results[0].type)
+            result_value = str(op.operation.results[0])
         except (IndexError, AttributeError):
             self._gaps.append(
                 Gap(
@@ -403,6 +404,7 @@ class IREngine:
                 nbytes=nbytes,
                 size_origin=origin,
                 shape_text=shape_text,
+                value=result_value,
             )
         )
 
