@@ -313,8 +313,11 @@ class VRegion:
     #: "func" | "for" | "if" | "while" | "scope" | "block"
     kind: str
     loc: Loc
-    nodes: tuple[VNode, ...] = ()
-    regions: tuple[VRegion, ...] = ()
+    #: **程序序**的子项序列（节点与子区域交错），是顺序的唯一真源。
+    #: 分离的 nodes/regions 元组会丢失两者的相对位置——若 wait 在循环体内、
+    #: set 在循环之后，"先节点再子区域"的遍历会把 set 排到 wait 之前，
+    #: 直接导致 M2 得出相反的死锁结论。
+    items: tuple[VNode | VRegion, ...] = ()
     #: kind == "for"/"while" 时的循环信息
     loop: VLoop | None = None
     #: 区域级属性（如 hivm.preload_num、loop_core_type）
@@ -330,15 +333,27 @@ class VRegion:
         if self.loop is not None and self.kind not in ("for", "while"):
             raise VIRError(f"VRegion({self.id}) kind={self.kind} 不应携带 loop")
 
-    def walk_nodes(self) -> Iterator[VNode]:
-        """按确定性顺序深度优先遍历本区域及子区域的节点（不变量 2）。
+    @property
+    def nodes(self) -> tuple[VNode, ...]:
+        """本区域的直接节点（派生视图，不含子区域）。"""
+        return tuple(i for i in self.items if isinstance(i, VNode))
 
-        顺序约定：先本区域 `nodes`，再依次进入 `regions`。该约定必须稳定，
-        因为 M2 的同步顺序判定直接依赖它。
+    @property
+    def regions(self) -> tuple[VRegion, ...]:
+        """本区域的直接子区域（派生视图）。"""
+        return tuple(i for i in self.items if isinstance(i, VRegion))
+
+    def walk_nodes(self) -> Iterator[VNode]:
+        """按**程序序**深度优先遍历本区域及子区域的节点（不变量 2）。
+
+        顺序即 `items` 的顺序：遇到子区域就进入，出来后继续。这保证
+        "循环体内的 op 排在循环之后的 op 之前"，M2 的同步顺序判定才成立。
         """
-        yield from self.nodes
-        for r in self.regions:
-            yield from r.walk_nodes()
+        for item in self.items:
+            if isinstance(item, VNode):
+                yield item
+            else:
+                yield from item.walk_nodes()
 
     def walk_regions(self) -> Iterator[VRegion]:
         yield self
@@ -423,8 +438,9 @@ class VModule:
 
     #: 来源标识（文件路径或语料 id）
     source: str
-    #: 顶层区域（通常每个 func.func 一个）
-    regions: tuple[VRegion, ...] = ()
+    #: 顶层区域（通常每个 func.func 一个）。命名与 VRegion.items 一致，
+    #: 使"程序序容器"在两层是同一个概念。
+    items: tuple[VRegion, ...] = ()
     allocs: tuple[VAlloc, ...] = ()
     syncs: tuple[VSync, ...] = ()
     coverage: Coverage = field(default_factory=Coverage)
@@ -468,13 +484,18 @@ class VModule:
 
     # -- 遍历（不变量 2） --------------------------------------------------
 
+    @property
+    def regions(self) -> tuple[VRegion, ...]:
+        """顶层区域（派生视图）。"""
+        return self.items
+
     def walk_nodes(self) -> Iterator[VNode]:
-        """全模块确定性顺序遍历。"""
-        for r in self.regions:
+        """全模块**程序序**遍历。"""
+        for r in self.items:
             yield from r.walk_nodes()
 
     def walk_regions(self) -> Iterator[VRegion]:
-        for r in self.regions:
+        for r in self.items:
             yield from r.walk_regions()
 
     def node_order(self) -> tuple[str, ...]:
@@ -562,8 +583,8 @@ def check_invariants(module: VModule) -> Sequence[str]:
     if module.node_order() != module.node_order():
         problems.append("不变量 2 违规：node_order() 两次调用结果不一致")
     for r in module.walk_regions():
-        if not isinstance(r.nodes, tuple) or not isinstance(r.regions, tuple):
-            problems.append(f"不变量 2 违规：VRegion({r.id}) 的容器非 tuple")
+        if not isinstance(r.items, tuple):
+            problems.append(f"不变量 2 违规：VRegion({r.id}) 的 items 非 tuple")
 
     # 不变量 3：可回溯源位置
     for n in module.walk_nodes():

@@ -310,11 +310,39 @@ MLIR 文本 ──[IR 接口引擎]──► VIR ──┬──► 占用/生�
 
 **不变量**：
 1. VIR 构造后**不可变**（引擎不得原地改写；派生分析产出旁挂结构），保障 FR8 确定性与多策略并行探索的隔离；
-2. 节点顺序为**确定性**拓扑序（同一 MLIR 输入逐字节稳定，与配置文档同一 FR8 口径）；
+2. 节点顺序为**确定性程序序**（同一 MLIR 输入逐字节稳定，与配置文档同一 FR8 口径）；
 3. 每个 `VNode` 必须可回溯到 MLIR 源位置——FR5 可诊断性的物理基础；
 4. 不认识的 op/结构**必须**落入 `coverage`，不得静默丢弃（FR4）。
 
+**程序序的单一真源（T1.1 契约修订）**：`VRegion.items` 是**节点与子区域交错的单一序列**，
+`nodes` / `regions` 退化为派生视图（`@property`）。
+
+- **修订理由**：初版把两者分成 `nodes` 与 `regions` 两个元组，遍历约定为"先节点再子区域"。
+  T1.1 用真实语料验证时发现，这会让循环**之后**的 `store` 排到循环**体内**的 `vadd` 之前
+  （实测 `loop_load_add_store.mlir` 得出 `n4, n7, n6`，而源码行号为 10, 14, 12）。
+- **为何必须修**：若 `wait` 在循环体内、`set` 在循环之后，错误的顺序会让 M2 得出**相反**的
+  死锁结论——而"顺序而非计数"正是本项目相对 FileCheck 的核心价值（D6/§7.2）。
+  两个分离的容器无法表达相对位置，属结构性缺陷，非实现 bug。
+- **回归防线**：`test_program_order_interleaves_nodes_and_subregions`（手写 VIR）+
+  `test_program_order_matches_source_line_order_on_real_ir`（真实 IR 上断言行号递增）。
+
 **版本化**：VIR 为内部契约，不承诺对外稳定；但破坏性变更须同步更新全部消费引擎，且在本节记录变更理由（避免退化为各引擎私有分支）。
+
+### 6.2 bindings 获取与本地可用性（T1.1 实测）
+
+绑定树可整体拉取到本地供开发使用，`scripts/setup_bindings.sh` 已固化该流程。
+
+| 事项 | 实测结论 |
+|---|---|
+| ABI | `cp310`——**必须** CPython 3.10；更高版本无法加载 `.so` |
+| 体积 | 约 246M（84 个文件 + **139 个符号链接**） |
+| 关键陷阱 | 树内符号链接指向构建目录，`rsync -az` 会得到 139 个**悬空链接**且无报错；必须用 **`rsync -azL`** 解引用 |
+| 方言注册 | 站点初始化**不会**自动注册 hivm，须显式调用 `_bishengirRegisterEverything.register_dialects(ctx)`（框架 §6 强制条款） |
+| 定位方式 | `HIVM_SPEC_BINDINGS` 环境变量，回退 `/tmp/bindings` |
+
+**探测逻辑只有一份**：`tests/conftest.py` 委托 `hivm_spec.bindings.bindings_available()`，
+不自行判断。两处独立探测必然漂移，会造成"conftest 跳过而引擎其实能加载"的错位；
+且绑定树不在 `sys.path` 上，`find_spec("bishengir")` 判不出来。
 
 
 ## 7. 首批 spec 工具规格

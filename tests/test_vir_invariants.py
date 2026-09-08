@@ -40,8 +40,8 @@ def _node(nid: str, op: str = "hivm.hir.vadd", **kw: object) -> VNode:
 def _module(*nodes: VNode, **kw: object) -> VModule:
     """构造合法模块；默认把出现的 op 全部登记为已建模（满足不变量 4）。"""
     kw.setdefault("coverage", Coverage(modeled_ops=tuple(sorted({n.op for n in nodes}))))
-    region = VRegion(id="r0", kind="func", loc=LOC, nodes=nodes)
-    return VModule(source="t.mlir", regions=(region,), **kw)  # type: ignore[arg-type]
+    region = VRegion(id="r0", kind="func", loc=LOC, items=nodes)
+    return VModule(source="t.mlir", items=(region,), **kw)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -104,13 +104,13 @@ def test_inv2_nested_region_order_is_depth_first_nodes_before_subregions() -> No
         id="r1",
         kind="for",
         loc=LOC,
-        nodes=(_node("inner0"), _node("inner1")),
+        items=(_node("inner0"), _node("inner1")),
         loop=VLoop(iv="i", trip_count=4),
     )
-    outer = VRegion(id="r0", kind="func", loc=LOC, nodes=(_node("outer0"),), regions=(inner,))
+    outer = VRegion(id="r0", kind="func", loc=LOC, items=(_node("outer0"), inner))
     m = VModule(
         source="t.mlir",
-        regions=(outer,),
+        items=(outer,),
         coverage=Coverage(modeled_ops=("hivm.hir.vadd",)),
     )
     assert m.node_order() == ("outer0", "inner0", "inner1")
@@ -127,10 +127,10 @@ def test_inv2_fingerprint_is_deterministic_and_order_sensitive() -> None:
 
 def test_inv2_fingerprint_ignores_source_path_and_engine_version() -> None:
     """路径与引擎版本不属语义指纹（同 §7.3 对 spec_hash 的处理）。"""
-    r = VRegion(id="r0", kind="func", loc=LOC, nodes=(_node("a"),))
+    r = VRegion(id="r0", kind="func", loc=LOC, items=(_node("a"),))
     cov = Coverage(modeled_ops=("hivm.hir.vadd",))
-    a = VModule(source="x.mlir", regions=(r,), coverage=cov, engine_version="0.1")
-    b = VModule(source="y.mlir", regions=(r,), coverage=cov, engine_version="0.2")
+    a = VModule(source="x.mlir", items=(r,), coverage=cov, engine_version="0.1")
+    b = VModule(source="y.mlir", items=(r,), coverage=cov, engine_version="0.2")
     assert a.fingerprint() == b.fingerprint()
 
 
@@ -171,7 +171,7 @@ def test_inv3_checker_flags_missing_loc() -> None:
     object.__setattr__(bad, "attrs", {})
     hacked = VModule(
         source="t.mlir",
-        regions=(VRegion(id="r0", kind="func", loc=LOC, nodes=(m.regions[0].nodes[0], bad)),),
+        items=(VRegion(id="r0", kind="func", loc=LOC, items=(m.regions[0].nodes[0], bad)),),
         coverage=Coverage(modeled_ops=("hivm.hir.vadd",)),
     )
     problems = check_invariants(hacked)
@@ -187,8 +187,8 @@ def test_inv4_unmodeled_op_not_in_coverage_is_a_violation() -> None:
     """核心反自欺场景：出现了没建模的 op，却既不登记已建模也不报缺口。"""
     m = VModule(
         source="t.mlir",
-        regions=(
-            VRegion(id="r0", kind="func", loc=LOC, nodes=(_node("n0", op="hivm.hir.mystery"),)),
+        items=(
+            VRegion(id="r0", kind="func", loc=LOC, items=(_node("n0", op="hivm.hir.mystery"),)),
         ),
         coverage=Coverage(modeled_ops=()),  # 空：既未建模也未报缺口
     )
@@ -200,8 +200,8 @@ def test_inv4_unmodeled_op_not_in_coverage_is_a_violation() -> None:
 def test_inv4_declared_gap_satisfies_the_invariant() -> None:
     m = VModule(
         source="t.mlir",
-        regions=(
-            VRegion(id="r0", kind="func", loc=LOC, nodes=(_node("n0", op="hivm.hir.mystery"),)),
+        items=(
+            VRegion(id="r0", kind="func", loc=LOC, items=(_node("n0", op="hivm.hir.mystery"),)),
         ),
         coverage=Coverage(
             gaps=(
@@ -240,7 +240,7 @@ def test_sync_referencing_nonexistent_node_is_rejected() -> None:
     with pytest.raises(VIRError, match=r"幻影|未出现"):
         VModule(
             source="t.mlir",
-            regions=(VRegion(id="r0", kind="func", loc=LOC, nodes=(_node("n0"),)),),
+            items=(VRegion(id="r0", kind="func", loc=LOC, items=(_node("n0"),)),),
             syncs=(VSync(node_id="ghost", kind=SyncKind.SET_FLAG, loc=LOC),),
             coverage=Coverage(modeled_ops=("hivm.hir.vadd",)),
         )
@@ -304,7 +304,7 @@ def test_sync_order_exposes_waits_before_sets_though_counts_balance() -> None:
     )
     m = VModule(
         source="t.mlir",
-        regions=(VRegion(id="r0", kind="func", loc=LOC, nodes=nodes),),
+        items=(VRegion(id="r0", kind="func", loc=LOC, items=nodes),),
         syncs=syncs,
         coverage=Coverage(modeled_ops=("hivm.hir.sync_block_set", "hivm.hir.sync_block_wait")),
     )
