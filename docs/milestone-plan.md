@@ -24,7 +24,7 @@
 ### 门禁核实结果（首个执行记录）
 
 - **V2 ✅ 通过**：Python 3.14.4（系统解释器）；依赖经 uv 装入 `.venv`：numpy 2.5.3 / jsonschema 4.26.0 / hypothesis 6.167.1 / pytest 9.1.1（cp314 轮子可用，venv 基于系统解释器可长期使用）。环境备注：系统无 pip/ensurepip、`~/.cache` 只读，已用 uv 用户态安装并将缓存重定向 `/tmp`。
-- **V1 ⚠️ 受阻，待定解法**：系统无 AscendNPU-IR 构建产物（无 python bindings、无 bishengir-opt）；PyPI 无可用 MLIR 绑定（`mlir`/`mlir-python-bindings` 均为 0.0.1 占位包，torch-mlir 无 cp314 轮子）。源码构建可行性已核实（cmake 4.2.3 / ninja / clang 在位、24 核、855G 空闲，预计 1–2h，含子模块克隆 ~1.5GB）。处置选项：A 沙箱内源码构建（顺带获得 bishengir-opt，利于 T1.0 gap 分析）；B 用户提供既有构建产物；C 暂缓 V1 先行 M0 T0.1–T0.7（无 bindings 依赖），V1 就绪后补 T0.8/T1.1。
+- **V1 ✅ 通过**（经编译服务器 ssh `build`）：在 `~/proj/AscendNPU-IR` 开启 `MLIR_ENABLE_BINDINGS_PYTHON=ON` 增量构建（为其 python3.10 补装 numpy、pybind11==2.13.6——3.x 与 MLIR 19 绑定不兼容）。绑定包位于 `build/tools/bishengir/bishengir/python_packages/bishengir`（完整 MLIR API 以 `bishengir.` 前缀重根化，`from bishengir import ir`）。验证脚本 `scripts/v1_hivm_parse_test.py`：`test/Dialect/HIVM` 172 个正例严格解析 134 个；38 个失败均为测试夹具属性（26 个故意用未注册假 op、11 个单文件多用例重定义、1 个 test-only 方言），**无一为 hivm 方言能力缺口**；allow-unregistered 下 157/172。**发现主仓 bindings 缺口（建议上游回报）**：`_mlir_libs` 站点初始化只探测 `_mlirRegisterEverything`，不探测带前缀的 `_bishengirRegisterEverything`，导致 hivm/hfusion/hacc 不被自动注册；引擎须在 Context 创建后显式调用 `_bishengirRegisterEverything.register_dialects(ctx)`。注意：绑定 .so 为 cp310，本地沙箱 Python 3.14 不能直接加载——T1.1 起 IR 接口层将以"本地 uv 管理 py3.10 + 拉取绑定树"或"远端执行"方式对接。
 
 ## 2. M0：DSL 骨架
 
