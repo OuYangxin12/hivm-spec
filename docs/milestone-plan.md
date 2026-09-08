@@ -39,13 +39,14 @@
 | T0.7 | 性质测试骨架：Hypothesis 注册表 + 示例（vadd 交换律） | 框架可运行、可扩展 |
 | T0.8 | 账本绊线首版：pytest 遍历 hivm 已注册 op vs 账本，未声明 op 报告（cmake/tablegen 集成后置） | 对全 122 op 输出覆盖报告 |
 
-> **M0 新增前置任务（架构审查 D6/D11）**——须在 T0.1 之前完成：
+> **M0 新增前置任务（架构审查 D6/D11/D13）**——须在 T0.1 之前完成：
 >
 > | 任务 | 内容 | 验收 |
 > |---|---|---|
 > | **T0.0** | **VIR 契约（D6）**：定义 `VNode`/`VRegion`/`VLoop`/`VAlloc`/`VSync`/`VTrace` 钩子/`coverage` 的 dataclass 与四条不变量（框架 §6.1）；含值槽位与执行轨迹钩子（D8 为 M3 预留） | 契约模块 + 不变量单测；后续引擎一律消费 VIR，无绕过 |
 > | **T0.0b** | **语法 spike（D11）**：以示意语法试写三 op——vadd（平凡）/ 跨迭代多 Wait-Set 事件对（效应复杂度，取自 `sync_related_args`）/ mmad 类（预期逃生舱）；产出"可表达 or 逃生舱"结论 | 三 op 结论入档；T0.1 API 据此定稿 |
 > | **T0.0c** | **工程门禁落地（D5/D7）**：CI 四 job + spec-gate + lint/类型 + 双层版本策略 | ✅ 已完成（审查整改批次） |
+| **T0.0d** | **测试语料 L0/L1（D13）**：`specs/cases/corpus/l0/` 手写微例 5–8 个（<30 行，覆盖 VIR 四不变量所需结构）+ `manifest.json` 契约；L1 从主仓 21 个干净 UT 中选 8–12 个入库并锚定来源 commit（规格见框架 §14） | L0 全部可转 VIR 且不变量单测通过；L1 每份无 `COVERAGE_GAP`；manifest 完备 |
 
 ## 3. M1：UB 占用图（首个 spec 工具）
 
@@ -97,7 +98,7 @@
 
 - **CI 接入**：✅ 已落地（`.github/workflows/ci.yml` 四 job：lint+types / core 矩阵 3.10+3.12 / schema golden / spec-gate）；M1 末评估 lit 接入 `check-bishengir`；
 - **描述 PR 模板**：trust 升级 checklist（三类用例证据，D4/OD4+OD11）；**已由 spec-gate R2 机械强制**；
-- **对拍用例库**：`specs/cases/`，与描述同 PR 演进（OD11）；
+- **对拍用例库**：`specs/cases/`，与描述同 PR 演进（OD11）；**语料按 D13 分层引入**（L0 手写 → L1 干净 UT → L2 按需剥离 → L3 e2e dump），入库并以 manifest 锚定来源 commit（框架 §14）；
 - **性能复核点**：M3.7 是 D1 的唯一预设复查点；per-tool 预算见 D10；
 - **文档联动**：每里程碑退出时更新框架文档 §9 状态与本计划勾选。
 
