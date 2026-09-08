@@ -65,6 +65,7 @@ hivm-spec tool timeline <after.mlir>                      # M2
 | **DSL 概念清单封闭**：§4.2 所列之外的表达能力一律不加 | §4.4 | DSL 范围蔓延 |
 | **verdict 为封闭枚举**；`COVERAGE_GAP`/`UNTRUSTED_DESCRIPTION` 是合法结论 | §7.3 | 静默误判，元可信性丧失 |
 | **不主动上游化**到 AscendNPU-IR；本项目是纯下游使用者 | milestone §8 | 越界修改主仓 |
+| **工具输入恒为单份 IR**（等价验证为待验+锚点两份）：不吃 pass 序列、不解析 `--print-ir-*` 转储、不建模 pass 顺序、不跨调用保持状态 | D12 | 契约随主仓 pipeline 膨胀（冲击 NFR4）；重复 MLIR 与 agent 已有能力 |
 
 ## 5. 未实现阶段的诚实报告（FR7）
 
@@ -75,7 +76,28 @@ hivm-spec tool timeline <after.mlir>                      # M2
 - 静默跳过检查；
 - 把"环境不可用"报告成"验证失败"（二者必须区分——这正是 FR7 的要求）。
 
-## 6. 工程约定
+## 6. 跨 pass 定位由你编排（D12）
+
+工具只回答"这一份 IR 有没有这个毛病"。定位"哪个 pass 引入了毛病"是**你的工作**，
+用既有能力组合即可——不要为此扩展工具契约：
+
+```bash
+# 1. 转储各 pass 的 IR（MLIR 标准能力）
+bishengir-opt ... --mlir-print-ir-after-all 2> dumps.txt   # 或 --print-ir-after=<pass>
+
+# 2. 按 pass 切分后，对每份分别调用工具；第一个异常 verdict 即首恶 pass
+for f in dump_*.mlir; do hivm-spec tool timeline "$f"; done
+```
+
+同理，三类检查各自独立调用、结论正交：
+
+```bash
+hivm-spec tool timeline      after.mlir                 # 死锁/时序：只看 after
+hivm-spec tool ub_occupancy  after.mlir                 # 片上内存溢出：只看 after
+hivm-spec tool equivalence   before.mlir after.mlir     # 语义等效：before 为锚点
+```
+
+## 7. 工程约定
 
 - **PR 流程**：main 禁直推；feature 分支 → PR → 合入。单人阶段免**人工**审批，
   但**机器门禁不可绕过**（D5）。修改 `.github/`、`scripts/spec_gate.py`、本文件
