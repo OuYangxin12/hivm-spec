@@ -14,8 +14,10 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 # FR8 确定性要求依赖可复现：主依赖钉兼容版本区间，lock 由 uv 维护。
+# numpy 下界取 2.2 而非 2.5：numpy 2.5 要求 Python >=3.12，与 D7 的 3.10 地板冲突
+# （由 CI py3.10 腿实证——3.10 上 numpy 上限为 2.2.6）。约束须同时满足矩阵两端。
 dependencies = [
-    "numpy~=2.5",
+    "numpy>=2.2,<3",
     "jsonschema~=4.26",
 ]
 

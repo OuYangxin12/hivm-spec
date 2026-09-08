@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +43,28 @@ def test_core_dependencies_are_pinned(pyproject: dict) -> None:
     for dep in pyproject["project"]["dependencies"]:
         assert any(op in dep for op in ("~=", "==", ">=", "<")), (
             f"依赖 {dep!r} 无版本约束，违反 FR8 可复现性要求"
+        )
+
+
+def test_no_dependency_excludes_the_python_floor(pyproject: dict) -> None:
+    """依赖约束必须在 D7 的 3.10 地板上可解。
+
+    回归防护：`numpy~=2.5` 曾通过本地 3.14 环境的检查，却在 CI py3.10 腿上
+    不可安装（numpy 2.5 要求 Python >=3.12，3.10 的上限是 2.2.6）。这正是
+    审查中指出的"声明与现实脱节"，故以测试固化：下界不得高于 3.10 支持的
+    最高版本。此处为静态哨兵（不联网），编码已知的版本-解释器耦合。
+    """
+    floor_max = {"numpy": (2, 2)}  # numpy 2.3+ 要求 >=3.11；2.5+ 要求 >=3.12
+    for dep in pyproject["project"]["dependencies"]:
+        name = re.split(r"[<>=~!\[]", dep, maxsplit=1)[0].strip()
+        if name not in floor_max:
+            continue
+        lower = re.search(r"(?:>=|~=)\s*(\d+)\.(\d+)", dep)
+        assert lower, f"{name} 缺少可解析的下界：{dep!r}"
+        got = (int(lower.group(1)), int(lower.group(2)))
+        assert got <= floor_max[name], (
+            f"{name} 下界 {got} 超出 Python 3.10 可安装的最高版本 "
+            f"{floor_max[name]}（D7 地板）；CI py3.10 腿将无法安装该依赖。"
         )
 
 
