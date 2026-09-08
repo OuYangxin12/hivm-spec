@@ -98,7 +98,7 @@ preload / CV 流水类特性的开发经验实证了 G3：
 
 | 编号 | 约束 |
 |---|---|
-| C1 | HIVM 为封闭 ISA（约 122 op，与 scf/arith/memref/tensor 等社区方言深度混用）——验证覆盖空间有限且已知 |
+| C1 | HIVM 为封闭 ISA（**实测 114 个已注册 op**，与 scf/arith/memref/tensor 等社区方言深度混用）——验证覆盖空间有限且已知 |
 | C2 | 动态 shape 与运行时 tiling 参数被广泛使用（约六成 HIVM 测试含动态维度）——验证须适用于运行时形状 |
 | C3 | A3（membase）与 A5（regbase）双路径在 master 并存。**不分叉**（Q5 关闭 / OD7）：op 语义一份共享，`arch` 段只存差异（容量常量 + regbase 特有 op 分文件），`Spec(arch=...)` 参数化 |
 

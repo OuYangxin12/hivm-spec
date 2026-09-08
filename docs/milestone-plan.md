@@ -36,8 +36,8 @@
 | T0.4 | 信任账本骨架：trust/provenance/`spec_hash`（sha256，定义见框架 §7.3）；覆盖报告（modeled/unmodeled）；**drift ledger 条目结构（D9）** | 账本随配置文档输出；漂移条目可登记 |
 | T0.5 | 生成 CLI：`hivm-spec gen <desc.py> -o config.json`（入口已在 pyproject 注册） | 端到端命令可用，替换当前 PENDING 返回 |
 | T0.6 | toy 描述：load/vadd/store + gm/ub + ub_occupancy check | 为 M1 提供输入；**spec-gate R1 转硬失败** |
-| T0.7 | 性质测试骨架：Hypothesis 注册表 + 示例（vadd 交换律） | 框架可运行、可扩展 |
-| T0.8 | 账本绊线首版：pytest 遍历 hivm 已注册 op vs 账本，未声明 op 报告（cmake/tablegen 集成后置） | 对全 122 op 输出覆盖报告 |
+| T0.7 ✅ | 性质测试骨架：Hypothesis 注册表 + 示例（vadd 交换律） | 框架可运行、可扩展 |
+| T0.8 ✅ | 账本绊线首版：pytest 遍历 hivm 已注册 op vs 账本，未声明 op 报告（cmake/tablegen 集成后置） | 对全量已注册 op 输出覆盖报告（实测 **114** 个，已建模 9） |
 
 > **M0 新增前置任务（架构审查 D6/D11/D13）**——须在 T0.1 之前完成：
 >
