@@ -1,0 +1,28 @@
+hivm-spec
+Copyright 2026 hivm-spec contributors
+
+This product includes software developed as an external verification tool for
+AscendNPU-IR (https://github.com/Ascend/AscendNPU-IR).
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+--------------------------------------------------------------------------------
+Relationship to AscendNPU-IR
+--------------------------------------------------------------------------------
+
+This project is a pure downstream consumer of AscendNPU-IR: it depends on the
+BiShengIR MLIR Python bindings (`bishengir`) as a runtime environment dependency
+and does not vendor, modify, or redistribute AscendNPU-IR source code. The HIVM
+semantic descriptions under `specs/` are independently authored models of
+observable dialect semantics, cross-validated against the upstream
+implementation as described in docs/design-framework.md §8.

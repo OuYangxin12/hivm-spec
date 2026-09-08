@@ -1,6 +1,8 @@
 # 业界调研与决策建议（对应设计框架 §10 OD1–OD12）
 
-> **状态**：调研纪要 v0.1，配套 `design-framework.md`。每个决策点给出：业界参照 → 可选项 → 建议（★）。
+> **状态**：调研纪要 v0.2，配套 `design-framework.md`。每个决策点给出：业界参照 → 可选项 → 建议（★）。
+> **注**：★ 为调研阶段建议；最终采纳结果见 `design-framework.md` §3（D4 采纳 OD1–OD12，D5–D11 为架构审查新增）。
+> 二者冲突时以 design-framework 为准——本文档标注【已决】处即为回写。
 
 ## 0. 四个参照系总览
 
@@ -29,6 +31,7 @@
 ### OD4 描述治理
 - **业界**：Sail/RISC-V 模型的 spec-first 治理；protobuf/buf 的 breaking-change CI。
 - **★建议**：描述库贴方言放置（`include/bishengir/Dialect/HIVM/specs/` 或独立 `specs/`，OD4a 二选一）；CODEOWNERS 标注；PR 门槛 = 静态检查通过 + trust 升级必须附对拍证据。
+- **【已决】OD4a 取独立 `specs/`**：本项目为独立仓库、纯下游使用者（milestone-plan V3/§8），不侵入主仓，故描述库落 `specs/`、对拍用例落 `specs/cases/`。CODEOWNERS 已建（门禁脚本与 AGENTS.md 同级看护）；PR 门槛已由 **D5 spec-gate** 机械强制（R1 描述变更必跑对拍集、R2 trust 升级必附证据）。
 
 ### OD5 AGENTS.md 接线
 - **业界**：仓库已有 skill 的 post-build-ut-gate 惯例，agent 对"精确命令 + 强制时机"的门禁遵循度最高。

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,12 +7,92 @@ name = "hivm-spec"
 version = "0.0.1"
 description = "Verifier generator for AI-assisted AscendNPU-IR (HIVM) compiler development"
 readme = "README.md"
-requires-python = ">=3.9"
-license = {text = "Apache-2.0"}
-dependencies = ["numpy", "jsonschema"]
+# D7 双层版本策略：3.10 是下界而非偏好——主仓 bishengir bindings .so 为 cp310 ABI，
+# IR 接口层必须在 3.10 运行。核心引擎（DSL/生成器/状态机/值执行）为纯 Python，
+# 不 import 绑定，故可在更高版本开发与测试；上界不封，由 CI 矩阵实测覆盖。
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+# FR8 确定性要求依赖可复现：主依赖钉兼容版本区间，lock 由 uv 维护。
+# numpy 下界取 2.2 而非 2.5：numpy 2.5 要求 Python >=3.12，与 D7 的 3.10 地板冲突
+# （由 CI py3.10 腿实证——3.10 上 numpy 上限为 2.2.6）。约束须同时满足矩阵两端。
+dependencies = [
+    "numpy>=2.2,<3",
+    "jsonschema~=4.26",
+]
 
 [project.optional-dependencies]
-test = ["pytest", "hypothesis"]
+test = [
+    "pytest~=9.1",
+    "hypothesis~=6.167",
+    # tomllib 自 3.11 起为标准库；3.10（D7 地板）需 tomli 回退（基线守卫测试用）。
+    "tomli~=2.2; python_version < '3.11'",
+]
+dev = [
+    "ruff~=0.14",
+    "mypy~=1.18",
+]
+# IR 接口层：需要主仓 bishengir bindings（cp310 ABI，不在 PyPI）。
+# 安装方式见 docs/milestone-plan.md §1 V1 记录；CI 无法提供，相应测试以
+# `requires_bindings` marker 隔离并在覆盖报告中登记为已知缺口（D7）。
+ir = []
+# M3+ 数值基础设施（OD3）与 M4 符号后端（OD1 方案 A → B 复评）。
+numeric = ["ml_dtypes~=0.5"]
+symbolic = ["z3-solver~=4.15"]
+
+[project.scripts]
+# D2：spec 工具的用户体验是"一个命令"，实现是"引擎 + 配置文档"。
+hivm-spec = "hivm_spec.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# ---------------------------------------------------------------- tooling
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    ".venv",
+    # V1 门禁探针：import 顺序是语义性的（sys.path 注入须先于 bishengir 导入，
+    # 且 bootstrap 注册扩展的导入位置与注释绑定），不交给 formatter 重排。
+    # 其记录的 bindings 缺口已提升为 design-framework §6 引擎强制条款。
+    "scripts/v1_hivm_parse_test.py",
+]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle / pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "RUF",
+]
+ignore = [
+    # 本项目文档与注释以中文书写，全角标点是正常内容而非"歧义字符"。
+    # 保留 RUF 其余规则，仅关闭这三条 ambiguous-unicode 检查。
+    "RUF001", "RUF002", "RUF003",
+]
+
+# scripts/ 为探针与门禁脚本，允许 print 与宽异常捕获
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["T201", "BLE001"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+strict = true
+
+# 主仓绑定无类型存根，IR 接口层对其调用不纳入 strict 检查
+[[tool.mypy.overrides]]
+module = ["bishengir.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "specs/cases"]
+# 显式 marker 注册：未注册 marker 在 strict 模式下报错，防止 typo 静默失效
+addopts = "--strict-markers"
+markers = [
+    "requires_bindings: 需要主仓 bishengir python bindings（cp310 ABI）；CI 与本地高版本环境跳过，属已登记覆盖缺口（D7）",
+    "schema_golden: 配置文档 schema 往返 golden 测试（OD9/FR8）",
+    "crosscheck: 与主仓 C++ 链的对拍用例（OD11，trust 升级证据）",
+]

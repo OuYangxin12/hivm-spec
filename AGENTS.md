@@ -1,0 +1,89 @@
+# AGENTS.md — hivm-spec agent 工作规约
+
+本仓库的主要贡献者是 AI agent。本文件是**强制约束**，不是建议：其中的门禁与不变量
+直接承载 FR6（防自欺）与 FR7（元可信）——本项目相对 lit/FileCheck 的核心价值。
+
+> 决策依据：`docs/design-framework.md` §3（D1–D11）。冲突时以该文档为准。
+
+---
+
+## 1. 提交前必跑（spec-gate，D5/OD5）
+
+**改动任何代码或描述后，提交前必须依次跑完以下命令并全绿：**
+
+```bash
+ruff check . && ruff format --check . && mypy src
+pytest -m "not requires_bindings" -q
+python scripts/spec_gate.py --base origin/main --head HEAD
+```
+
+**改动 `specs/` 下的描述时，额外必跑对拍集：**
+
+```bash
+pytest specs/cases -q
+```
+
+**改 HIVM pass（主仓侧）后，须跑对应 spec 工具**（M1 起可用）：
+
+```bash
+hivm-spec tool ub_occupancy <before.mlir> <after.mlir>   # M1
+hivm-spec tool timeline <after.mlir>                      # M2
+```
+
+失败即停止并修复，**不得**通过放松断言、改期望值、加 skip 或降低门禁使其变绿。
+
+## 2. 描述治理纪律（OD4/OD11 — 信任根）
+
+`specs/` 是验证结论的判定依据。修改它等于修改"什么算正确"，因此：
+
+- **新增/修改 op 描述**必须在同一 PR 内附对拍用例（`specs/cases/`）：
+  ① canonical 手工小例；② 与主仓 C++ 链对拍；③ Hypothesis 性质测试。
+- **trust 升级**（`provisional` → `cross-validated` → `anchored`）**必须附对拍证据**，
+  否则 spec-gate R2 直接拒绝合入。`anchored` 需硬件 golden（流程见框架 §8.1）。
+- **逃生舱条目**（注册 host Python 函数，OD8）信任**封顶 `provisional`**，不可升级；
+  必须显式声明效应并配性质测试。
+- **禁止**为让工具"跑通"而在描述中臆造语义。语义不确定时的正确动作是
+  **留空 → 触发 `COVERAGE_GAP`**，而非猜测。缺口是合法结论，静默不是。
+
+## 3. 语义漂移处置（D9）
+
+描述与主仓 C++ 链行为不一致时，**不得自行选择便利解释**：
+
+1. 先登记 drift ledger 条目（该 op 的 trust 升级随即冻结）；
+2. **默认权威 = 主仓 C++ 链** → 默认动作是修描述；
+3. 仅**硬件 golden** 可推翻上述默认（条目标 `upstream-suspected`）；
+4. 条目未闭环期间，涉及该 op 的结论强制降级标注。
+
+## 4. 架构不可违约束
+
+| 约束 | 依据 | 违反后果 |
+|---|---|---|
+| **只有 IR 接口引擎可 import `bishengir`**；核心层保持纯 Python | D7 | 核心层测试将被稀缺绑定环境阻塞，CI 覆盖崩塌 |
+| **所有引擎只消费 VIR**，不得各自遍历 MLIR | D6 §6.1 | 长出第二个解释核，"双源真理"在项目内部重演 |
+| **VIR 构造后不可变**；节点顺序确定性；每节点可回溯源位置；未识别结构必入 `coverage` | §6.1 不变量 | 破坏 FR8 确定性与 FR5 可诊断性 |
+| **社区方言（scf/arith/memref/tensor）语义不进描述**，由引擎内置 | §4.2 | 描述范围失控 |
+| **DSL 概念清单封闭**：§4.2 所列之外的表达能力一律不加 | §4.4 | DSL 范围蔓延 |
+| **verdict 为封闭枚举**；`COVERAGE_GAP`/`UNTRUSTED_DESCRIPTION` 是合法结论 | §7.3 | 静默误判，元可信性丧失 |
+| **不主动上游化**到 AscendNPU-IR；本项目是纯下游使用者 | milestone §8 | 越界修改主仓 |
+
+## 5. 未实现阶段的诚实报告（FR7）
+
+尚未实现的能力**必须**报 `PENDING(<任务号>)` 并以可区分的方式退出
+（CLI 退出码 3；pytest 显式 skip 带任务号），**禁止**：
+
+- 返回假的成功结论；
+- 静默跳过检查；
+- 把"环境不可用"报告成"验证失败"（二者必须区分——这正是 FR7 的要求）。
+
+## 6. 工程约定
+
+- **PR 流程**：main 禁直推；feature 分支 → PR → 合入。单人阶段免**人工**审批，
+  但**机器门禁不可绕过**（D5）。修改 `.github/`、`scripts/spec_gate.py`、本文件
+  需格外谨慎——能放松门禁的人等于能绕过防自欺。
+- **Python 版本**：核心 `>=3.10`（cp310 绑定 ABI 地板，勿放宽）；IR 层测试标
+  `requires_bindings`。
+- **依赖**：主依赖钉兼容区间（FR8）；环境用 uv，`~/.cache` 只读时
+  `export UV_CACHE_DIR=/tmp/uvcache`。
+- **文档联动**：里程碑退出时更新 `design-framework.md` §9 与 `milestone-plan.md`；
+  新增决策进 §3（沿用 D<n> 编号），不另起文档。
+- **性能预算**：per-tool 预算见 D10；里程碑退出时实测回填。
