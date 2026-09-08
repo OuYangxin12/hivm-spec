@@ -127,6 +127,17 @@ def run_pytest(marker_or_path: list[str], label: str, res: GateResult) -> None:
         res.note(f"{label}：通过")
 
 
+def _exports_spec(path: Path) -> bool:
+    """粗判某 .py 是否是描述文件（导出名为 spec 的对象）。
+
+    用文本匹配而非导入：spec-gate 必须在不执行任意代码的前提下做出判断。
+    """
+    if path.suffix != ".py" or not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return "spec = Spec(" in text or "spec: Spec" in text
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="spec-gate: description governance checks")
     ap.add_argument("--base", default="origin/main", help="base ref/sha")
@@ -169,27 +180,27 @@ def main() -> int:
     if has_cases:
         run_pytest([str(cases_dir)], "R1 对拍集", res)
     else:
-        res.pending(
-            "T0.6/OD11",
-            "specs/cases/ 尚无对拍用例（M0 未落地）。T0.6 起本条转为硬失败："
-            "描述变更而无对拍用例将阻塞合入。",
-        )
+        # T0.6 已落地，R1 已转硬失败：描述变更而无对拍用例即阻塞合入。
+        res.fail("描述发生变更但 specs/cases/ 无对拍用例——R1 要求描述变更必须由对拍集验证")
 
-    # --- 描述静态检查（生成前置门，T0.2）---
-    try:
-        import hivm_spec.generator  # noqa: F401
-
-        proc = subprocess.run(
-            [sys.executable, "-m", "hivm_spec", "check", *desc_changed],
-            cwd=REPO_ROOT,
-            check=False,
-        )
-        if proc.returncode != 0:
-            res.fail(f"描述静态检查失败（exit {proc.returncode}）")
+    # --- 描述静态检查（生成前置门，T0.2 已落地）---
+    if importlib.util.find_spec("hivm_spec") is None:
+        res.pending("env", "hivm_spec 未安装（环境问题，非描述错误）")
+    else:
+        # 只检查导出了 spec 对象的描述文件；spike 等辅助模块不是描述。
+        checkable = [f for f in desc_changed if _exports_spec(REPO_ROOT / f)]
+        if not checkable:
+            res.note("本次无导出 spec 对象的描述文件变更，静态检查跳过")
         else:
-            res.note("描述静态检查：通过")
-    except ModuleNotFoundError:
-        res.pending("T0.2", "静态检查器未实现，描述引用完备性/签名一致性尚未校验")
+            proc = subprocess.run(
+                [sys.executable, "-m", "hivm_spec", "check", *checkable],
+                cwd=REPO_ROOT,
+                check=False,
+            )
+            if proc.returncode != 0:
+                res.fail(f"描述静态检查失败（exit {proc.returncode}）")
+            else:
+                res.note(f"描述静态检查：{len(checkable)} 份描述通过")
 
     return res.report_and_exit()
 

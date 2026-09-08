@@ -97,7 +97,26 @@ hivm-spec tool ub_occupancy  after.mlir                 # 片上内存溢出：�
 hivm-spec tool equivalence   before.mlir after.mlir     # 语义等效：before 为锚点
 ```
 
-## 7. 工程约定
+## 7. 里程碑任务卡（强制）
+
+**每个 Mx 阶段开工前，必须先写好任务卡并落盘上传**（`docs/tasks/M<n>.md`），内容至少含：
+执行顺序与依赖图、任务清单（带完成信号与勾选框）、验收命令、风险与止损、需上报决策的情形。
+
+- 计划文档（`milestone-plan.md`）定**做什么**；任务卡定**按什么顺序做、每步完成信号是什么**。
+- 任务卡随该里程碑的 PR 持续更新勾选状态，**不允许**开工后才补卡。
+- 里程碑收尾时：更新卡内状态 → 同步 `milestone-plan.md` 勾选与框架 §9 → 写下一里程碑的卡。
+
+## 8. 测试语料纪律（D13）
+
+- 语料**分层引入**：L0 手写微例 → L1 主仓干净 UT → L2 按需剥离 → L3 e2e dump；不预先囤积。
+- 语料**入库**并在 `specs/cases/corpus/manifest.json` 记录来源文件 + 主仓 commit + 剥离方式。
+  缺 manifest 记录即视为来源不明。
+- **L1 门槛**：整份语料须可无 `COVERAGE_GAP` 转为 VIR；达不到就留在 L2，**不放宽门槛**。
+- **禁止**整批镜像主仓测试目录（189 文件中仅 21 个干净）——会把 `COVERAGE_GAP` 变成噪声，
+  使唯一的诚实降级信号失效；也会让 VIR 契约被 lit 夹具细节污染。
+- **不引入**负例（`expected-error`）作为解析语料：那是主仓 verifier 的职责。
+
+## 9. 工程约定
 
 - **PR 流程**：main 禁直推；feature 分支 → PR → 合入。单人阶段免**人工**审批，
   但**机器门禁不可绕过**（D5）。修改 `.github/`、`scripts/spec_gate.py`、本文件

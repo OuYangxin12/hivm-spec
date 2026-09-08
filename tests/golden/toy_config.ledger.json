@@ -1,0 +1,25 @@
+{
+  "coverage": {
+    "escape_hatch_count": 0,
+    "escape_hatches": [],
+    "modeled_op_count": 9
+  },
+  "drift": [],
+  "engine_version": "0.1.0",
+  "frozen_by_drift": [],
+  "generated_at": "2026-09-09T00:00:00+00:00",
+  "schema_version": 1,
+  "spec_hash": "sha256:cd407718d0939781c7402f5071854c913af779c003980b31e224fbe8b45f6923",
+  "spec_name": "hivm_toy",
+  "trust": {
+    "hivm.hir.load": "provisional",
+    "hivm.hir.pipe_barrier": "provisional",
+    "hivm.hir.set_flag": "provisional",
+    "hivm.hir.store": "provisional",
+    "hivm.hir.sync_block_set": "provisional",
+    "hivm.hir.sync_block_wait": "provisional",
+    "hivm.hir.vadd": "provisional",
+    "hivm.hir.vmul": "provisional",
+    "hivm.hir.wait_flag": "provisional"
+  }
+}

@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "generated_note": "语料来源锚定（D13 / 框架 §14）。sha256 为入库时快照，用于漂移检测。",
+  "upstream_repo": "AscendNPU-IR",
+  "entries": [
+    {
+      "path": "l0/cross_iter_event_pair.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "sha256": "sha256:33ba10111657177c347c5817fe30c98e9be0dce90e95824e324d234cceb65153",
+      "features": [
+        "set_flag",
+        "wait_flag",
+        "event_id",
+        "scf_for"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "跨迭代事件对（D11 spike op ②）"
+    },
+    {
+      "path": "l0/dynamic_shape_alloc.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "sha256": "sha256:8d17cd0fe18aaa0c18e446b211cc21c080fcd4c7ee480bb0f59288da059be839",
+      "features": [
+        "dynamic_shape",
+        "unknown_size"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "动态 shape：尺寸未知须为一等公民"
+    },
+    {
+      "path": "l0/loop_load_add_store.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "sha256": "sha256:6797a2d6f4ecab807e47b5b91ce0ea3332ec2571502170cf84aed682645ca8a2",
+      "features": [
+        "static_shape",
+        "scf_for",
+        "load_store",
+        "vadd"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "最小 UB 占用回路"
+    },
+    {
+      "path": "l0/nested_loop_scope.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "sha256": "sha256:04d6fd47e6b709ffc2cbc3be75f5799a2bd20409e72c677c7d641da3a7eb4afa",
+      "features": [
+        "nested_region",
+        "nested_loop",
+        "pipe_barrier"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "嵌套区域遍历顺序约定"
+    },
+    {
+      "path": "l0/unmodeled_op.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "sha256": "sha256:0ac5802a55e705ed1d12101e5b6cad6d3adb5ec6b7ab24da9791deee1ae35611",
+      "features": [
+        "coverage_gap"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "未建模 op 的诚实降级路径"
+    },
+    {
+      "path": "l0/waits_before_sets_deadlock.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "sha256": "sha256:4b84561658e30ac9add563261ce35fd61a3580d4ea341a6f6fecd19ef2f5335e",
+      "features": [
+        "sync_block",
+        "order_sensitive",
+        "deadlock"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "真实故障最小复现：计数配平但顺序不可行"
+    },
+    {
+      "path": "l1/annotate-vf-alias.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/annotate-vf-alias.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:74e7136f873c5b5dae440613e734408f1e6d497ff6b778c381c8bc1a258d5969",
+      "features": [
+        "alias",
+        "vf"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/bind-sub-workspace-arg.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/bind-sub-workspace-arg.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:2ff6888f4c61218918d8638115a232d63f57f14fddf887e54c2173952ff33470",
+      "features": [
+        "workspace",
+        "minimal"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/enable-cv-tight-communication.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/enable-cv-tight-communication.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:8d96c88ea73ead918348d98e92d6e77927fd0ba04f8a2ab1dd76804efa1f95ac",
+      "features": [
+        "cv_communication",
+        "mix_kernel"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/hivm-insert-nz2nd-for-debug.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/hivm-insert-nz2nd-for-debug.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:9d9c287ef38d8f4ab72e85260820c798c78c7787d49093408cd2cdfeb7651c28",
+      "features": [
+        "layout",
+        "nz2nd"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/hivm-pipeline.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/hivm-pipeline.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:1e1235e5650c5986ad42ea634bae7442e555a1133c94bf515f5882fce41b29be",
+      "features": [
+        "pipeline"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/hivm-varange.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/hivm-varange.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:8467c46602a05af417c15948840f867655bd0c80c378bc2ad459b9dce5b7db3f",
+      "features": [
+        "minimal",
+        "varange"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/infer-func-core-type.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/infer-func-core-type.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:e8fc4a97d791f13ae835504963a791bbe28e2d84b682fcd0e2904f08430c330a",
+      "features": [
+        "core_type",
+        "aic_aiv"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/removeCopyOps.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/removeCopyOps.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:5a6b9b8f478f712966f69e3029578e5163aebe7bd570aba55cf0cd22c5daf4ec",
+      "features": [
+        "copy",
+        "effects"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/split-mix-kernel-scf-for-result.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/split-mix-kernel-scf-for-result.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:e92c6c7f7aba56f87fc1b9d802e36a0c35c5053bd4196318e25b708340139dea",
+      "features": [
+        "scf_for",
+        "loop_result",
+        "mix_kernel"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l1/sync-solver-round-robin-event-id.mlir",
+      "layer": "l1",
+      "origin": "AscendNPU-IR",
+      "source_path": "bishengir/test/Dialect/HIVM/sync-solver-round-robin-event-id.mlir",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "extraction": "verbatim",
+      "sha256": "sha256:0b6c8d73f8a9b8cca0db8527ca8f5c1d71a97e8947616f157aa7e3fe776ac5c9",
+      "features": [
+        "sync_block",
+        "event_id",
+        "sync_solver"
+      ],
+      "parse_verified": "bishengir-opt strict (no allow-unregistered)",
+      "notes": "干净文件，无需夹具剥离"
+    }
+  ]
+}
