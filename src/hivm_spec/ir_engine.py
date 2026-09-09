@@ -27,6 +27,7 @@ from hivm_spec.vir import (
     SizeOrigin,
     SyncKind,
     VAlloc,
+    VIRError,
     VLoop,
     VModule,
     VNode,
@@ -81,6 +82,10 @@ SYNC_KINDS = {
 #: 的 3 个 func 因此全部不可见，工具却仍给出结论。
 REGION_KINDS = {
     "builtin.module": "module",
+    #: scope.scope 是 HIVM 的作用域容器（preload kernel 的主结构）。它不以
+    #: "hivm." 开头，若按社区方言处理会**连同函数体一起静默跳过**——与
+    #: builtin.module 同一类缺陷，实测会丢掉整个 kernel 的主体。
+    "scope.scope": "scope",
     "scf.for": "for",
     "scf.while": "while",
     "scf.if": "if",
@@ -305,6 +310,19 @@ class IREngine:
             self._record_alloc(op, loc)
             return None
 
+        # memref_ext.alloc_workspace：从 workspace 参数（GM）划出一块 buffer。
+        # 它是**真实的分配点**，忽略会低估占用；但 workspace 在 GM，不参与
+        # 片上容量判定，故单独登记（space=gm）而非与 memref.alloc 混同。
+        if name == "memref_ext.alloc_workspace":
+            self._record_workspace_alloc(op, loc)
+            return None
+
+        # annotation.mark：编译器标注（T1.3 尺寸策略的"标注优先"来源）。
+        # 消费 hivm.multi_buffer；其余标注记录后忽略（不静默）。
+        if name == "annotation.mark":
+            self._apply_annotation(op, loc)
+            return None
+
         # 只对 hivm op 建节点；社区方言（arith/memref/scf 等）作为支撑结构，
         # 不进 VIR 节点流——它们不承载 HIVM 语义，纳入只会放大遍历噪声。
         if not name.startswith("hivm."):
@@ -428,6 +446,109 @@ class IREngine:
                 )
             )
 
+    def _record_workspace_alloc(self, op: Any, loc: Loc) -> None:
+        """登记 memref_ext.alloc_workspace 划出的 workspace buffer。
+
+        workspace 从 GM 参数划出，故 space=gm（provisional 判断，依据
+        hacc.arg_type<workspace> 的主仓惯例）。它不参与 ub/cbuf 容量判定，
+        但必须可见——否则 fixpipe 的落点 buffer 在结果里查无来历。
+        """
+        try:
+            result_type = str(op.operation.results[0].type)
+            result_value = str(op.operation.results[0])
+        except (IndexError, AttributeError):
+            self._gaps.append(
+                Gap(
+                    kind=GapKind.UNRECOGNIZED_STRUCTURE,
+                    detail="alloc_workspace 无结果类型，无法确定分配尺寸",
+                    loc=loc,
+                )
+            )
+            return
+        nbytes, origin, shape_text = _nbytes_of(result_type)
+        name = self._next_id("ws")
+        if origin is SizeOrigin.UNKNOWN:
+            self._gaps.append(
+                Gap(
+                    kind=GapKind.UNKNOWN_SIZE,
+                    detail=f"workspace buffer {name}（{shape_text or result_type}）"
+                    "尺寸无法静态确定",
+                    loc=loc,
+                )
+            )
+        self._allocs.append(
+            VAlloc(
+                name=name,
+                space="gm",
+                loc=loc,
+                nbytes=nbytes,
+                size_origin=origin,
+                shape_text=shape_text,
+                value=result_value,
+            )
+        )
+
+    def _apply_annotation(self, op: Any, loc: Loc) -> None:
+        """消费 annotation.mark 标注。
+
+        hivm.multi_buffer = N：buffer 复制 N 份供流水线交替，总占用 ×N。
+        标注作用于 alloc 的**结果 value**，按 value 名精确匹配到 VAlloc；
+        匹配不到的标注登记缺口（可能是引擎没建模的分配形态）。
+        """
+        attrs = self._extract_attrs(op)
+        try:
+            target = str(op.operation.operands[0])
+        except (IndexError, AttributeError):
+            return
+
+        mb = attrs.get("hivm.multi_buffer")
+        if mb is None:
+            # 其余标注（如 cv_pipeline_lazy_load）与占用无关，记录即可
+            self._notes.append(
+                f"annotation.mark（{loc.describe()}）：标注 {sorted(attrs)} 与占用无关，忽略"
+            )
+            return
+        try:
+            # _extract_attrs 把属性字符串化为 "2 : i32" 形态，须剥掉类型后缀
+            n = int(str(mb).split(":")[0].strip())
+        except (TypeError, ValueError):
+            self._gaps.append(
+                Gap(
+                    kind=GapKind.UNRECOGNIZED_STRUCTURE,
+                    detail=f"annotation.mark 的 multi_buffer 值无法解析：{mb!r}",
+                    loc=loc,
+                )
+            )
+            return
+
+        for i, alloc in enumerate(self._allocs):
+            if alloc.value == target:
+                updated = VAlloc(
+                    name=alloc.name,
+                    space=alloc.space,
+                    loc=alloc.loc,
+                    nbytes=alloc.nbytes,
+                    size_origin=alloc.size_origin,
+                    shape_text=alloc.shape_text,
+                    value=alloc.value,
+                    origin=alloc.origin,
+                    multi_buffer=n,
+                )
+                self._allocs[i] = updated
+                self._notes.append(
+                    f"buffer {alloc.name} 命中 hivm.multi_buffer={n}，占用按 {alloc.nbytes}×{n} 计"
+                )
+                return
+
+        self._gaps.append(
+            Gap(
+                kind=GapKind.UNRECOGNIZED_STRUCTURE,
+                detail=f"annotation.mark 引用的 value {target} 未对应已登记的 buffer，"
+                "multi_buffer 标注未生效",
+                loc=loc,
+            )
+        )
+
     def _record_alloc(self, op: Any, loc: Loc) -> None:
         try:
             result_type = str(op.operation.results[0].type)
@@ -531,7 +652,14 @@ def lower_module_text(
     from hivm_spec.bindings import load_bindings
 
     handle = load_bindings()
-    module = handle.parse_module(text)
+    try:
+        module = handle.parse_module(text)
+    except VIRError:
+        raise
+    except Exception as exc:
+        # 解析失败是**被验证 IR 的问题**（FR7），必须与环境错误（BindingsError）
+        # 分源。否则 CLI 的 except BindingsError 会漏接，agent 看到的是裸 traceback。
+        raise VIRError(f"MLIR 解析失败：{exc}") from exc
     engine = IREngine(modeled_ops, op_effects=op_effects, op_pipes=op_pipes, arch=arch)
     return engine.lower(module, source)
 

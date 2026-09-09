@@ -97,6 +97,24 @@ hivm-spec tool ub_occupancy  after.mlir                 # 片上内存溢出：�
 hivm-spec tool equivalence   before.mlir after.mlir     # 语义等效：before 为锚点
 ```
 
+## 6.5 pass 变更触发工具验证（T1.8 spec-gate 首版）
+
+**规则**：凡修改 HIVM pass 实现代码（`bishengir/**` 下的 pass/transform 源文件），
+必须对**受影响 kernel 跑对应 spec 工具并把 verdict 贴进 PR 描述**。机器上可机械
+校验的部分（hivm-spec 仓库 CI）只校验"描述与语料的一致性"；pass 侧行为是否被
+工具复验，由本条纪律约束——因为工具的价值随"pass 改了却没人验"归零。
+
+最小执行集（按改动性质选取，拿不准就全跑）：
+
+| 改动性质 | 必跑 | 判据 |
+|---|---|---|
+| 内存/分配类（plan-memory、multi-buffer、workspace） | `ub_occupancy` 全部 L2 目标 kernel | verdict 不得从 OK/OVERFLOW 恶化为新增 OVERFLOW |
+| 调度/同步类（cv-pipelining、sync-solver、preload） | `timeline`（M2 起可用；此前记录"PENDING(timeline)"） | 死锁/时序 verdict 变化必须解释 |
+| op 定义/ODS 变更 | `hivm-spec check` 全部描述 + `registry` 绊线重测 | 覆盖率变化需在 PR 中说明 |
+
+判据基线是**变更前的 verdict**：先在改动前的 commit 跑一遍留存，再在改动后跑，
+两者对照贴进 PR。只贴"改后绿灯"不贴基线，等于没有验证。
+
 ## 7. 里程碑任务卡（强制）
 
 **每个 Mx 阶段开工前，必须先写好任务卡并落盘上传**（`docs/tasks/M<n>.md`），内容至少含：

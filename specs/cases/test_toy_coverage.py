@@ -162,3 +162,57 @@ def test_modeled_ops_actually_appear_in_some_corpus() -> None:
         f"以下 op 已建模但未出现在任何语料中，其描述无法被对拍验证：{never_seen}——"
         "应补语料或移除描述"
     )
+
+
+# ---------------------------------------------------------------------------
+# L2（收割自主仓 pass UT，T1.0b 起）
+# ---------------------------------------------------------------------------
+
+
+def _l2_files() -> list[Path]:
+    return sorted((CORPUS / "l2").glob("*.mlir"))
+
+
+def _all_modeled_ops() -> set[str]:
+    """toy + cv 描述的**并集**——真实 kernel 同时用到两个描述文件的 op。"""
+    ops: set[str] = set()
+    for name, path in (("toy_cov", TOY), ("cv_cov", REPO_ROOT / "specs" / "cv.py")):
+        spec_obj = importlib.util.spec_from_file_location(name, path)
+        assert spec_obj and spec_obj.loader
+        mod = importlib.util.module_from_spec(spec_obj)
+        spec_obj.loader.exec_module(mod)
+        ops |= {o.op for o in mod.spec.ops}
+    return ops
+
+
+def test_l2_corpus_exists() -> None:
+    assert _l2_files(), "L2 语料缺失（T1.0 收割后应有 19 份）"
+
+
+def test_l2_corpus_is_broad_enough() -> None:
+    assert len(_l2_files()) >= 19, (
+        f"L2 应覆盖 cv-pipelining 全部分节 + preload（≥19），实测 {len(_l2_files())}"
+    )
+
+
+@pytest.mark.parametrize("path", _l2_files(), ids=lambda p: p.name)
+def test_l2_ops_are_modeled_in_the_spec_union(path: Path) -> None:
+    """L2 是目标语料：出现的每个 hivm op 都必须在描述并集中建模。
+
+    与 L0 的"建模或声明缺口"不同——L2 的意义就在于**目标 kernel 无未建模 op**。
+    若主仓 kernel 出现新 op，此处失败即为新增建模需求的信号（绊线的行为面）。
+    """
+    modeled = _all_modeled_ops()
+    present = _ops_in(path)
+    unknown = present - modeled
+    assert not unknown, f"{path.name} 存在未建模 op：{sorted(unknown)}"
+
+
+def test_l2_entries_record_stripping() -> None:
+    """L2 每条必须留档剥离方式（D13：收割必须可审计）。"""
+    manifest = json.loads((CORPUS / "manifest.json").read_text(encoding="utf-8"))
+    for e in manifest["entries"]:
+        if e["layer"] != "l2":
+            continue
+        assert e.get("extraction"), f"{e['path']} 未记录剥离方式"
+        assert "source_path" in e, f"{e['path']} 未记录主仓来源路径"

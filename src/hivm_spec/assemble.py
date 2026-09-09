@@ -158,6 +158,10 @@ def run_ub_occupancy(config: dict[str, Any], module: VModule, spec_hash: str = "
             reasons.append(f"{unsized} 个 buffer 尺寸未知（峰值仅为下界）")
         if unmodeled:
             reasons.append(f"{len(unmodeled)} 个 op 未建模：{list(unmodeled[:5])}")
+        # reasons 可能为空（如仅存在 unknown-space 效应缺口）——此时必须说明
+        # 缺口在 diagnostics 里，不能输出"原因："后接空串。
+        if not reasons:
+            reasons.append("存在若干效应空间/尺寸无法确定的缺口，详见 diagnostics")
         findings.insert(
             0,
             Finding(

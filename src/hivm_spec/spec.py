@@ -343,6 +343,40 @@ class Spec:
         self._ops[name] = spec
         return spec
 
+    def merge(self, other: Spec) -> None:
+        """并入另一份描述（真实 kernel 需要多个描述文件的**并集**）。
+
+        重名一律报错——静默覆盖会让"两份描述对同一 op 给出不同语义"这一
+        最危险的分歧被掩盖；冲突必须由描述作者显式解决。
+        """
+        if other.arch != self.arch:
+            raise SpecError(
+                f"arch 不一致，无法合并：{self.name}={self.arch}，{other.name}={other.arch}"
+            )
+        for name, op in other._ops.items():
+            if name in self._ops:
+                raise SpecError(f"op 重复声明：{name}（来自 {self.name} 与 {other.name}）")
+            self._ops[name] = op
+        for name, sp in other._spaces.items():
+            if name in self._spaces:
+                if self._spaces[name] != sp:
+                    raise SpecError(f"space 冲突：{name}（{self._spaces[name]} vs {sp}）")
+                continue
+            self._spaces[name] = sp
+        known_pipes = {p.name for p in self._pipes}
+        known_events = {e.name for e in self._events}
+        for p in other._pipes:
+            if p.name not in known_pipes:
+                self._pipes.append(p)
+        for e in other._events:
+            if e.name not in known_events:
+                self._events.append(e)
+        known_checks = {c.name for c in self._checks}
+        for c in other._checks:
+            if c.name in known_checks:
+                continue
+            self._checks.append(c)
+
     # -- vm 段 ------------------------------------------------------------
 
     def space(self, name: str, capacity: int | None = None, align: int | None = None) -> None:

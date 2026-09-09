@@ -245,6 +245,11 @@ class VAlloc:
     shape_text: str = ""
     #: buffer 来源：本地分配还是函数参数（影响生存期口径）
     origin: AllocOrigin = AllocOrigin.LOCAL_ALLOC
+    #: 编译器多缓冲标注（`annotation.mark {hivm.multi_buffer = N}`）。
+    #: 多缓冲把同一 buffer 复制 N 份供流水线交替使用，**总占用 = nbytes × N**，
+    #: 且整个环跨循环存活。默认 1 = 无多缓冲。来源必须是真实 IR 标注，
+    #: 不得由分析器自行推断（T1.3：标注优先于推断，来源随结论输出）。
+    multi_buffer: int = 1
     #: 该 alloc 结果的 SSA value 文本。生存期分析靠它把 buffer 与节点操作数
     #: 精确关联——若改用"按出现顺序对齐"的近似，关联一旦错位，生存期就会算错，
     #: 而错误方向不可控（可能低估峰值把溢出判成 OK）。
@@ -261,6 +266,17 @@ class VAlloc:
             )
         if self.nbytes is not None and self.nbytes < 0:
             raise VIRError(f"VAlloc({self.name}).nbytes 不得为负")
+        if self.multi_buffer < 1:
+            raise VIRError(
+                f"VAlloc({self.name}).multi_buffer 必须 ≥1（1=无多缓冲），实为 {self.multi_buffer}"
+            )
+
+    @property
+    def effective_nbytes(self) -> int | None:
+        """计入多缓冲后的实际占用字节数。"""
+        if self.nbytes is None:
+            return None
+        return self.nbytes * self.multi_buffer
 
 
 @dataclass(frozen=True, slots=True)
