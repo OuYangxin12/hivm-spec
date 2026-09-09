@@ -88,6 +88,21 @@ strict = true
 module = ["bishengir.*"]
 ignore_missing_imports = true
 
+# numpy 视为无存根模块（类型即 Any）。这是版本矩阵的结构性冲突，不是图省事：
+# python_version=3.10 是 D7 的 ABI 地板（cp310 绑定），而开发机的 numpy 常装在
+# 更高版本解释器下（如 py3.14 的 numpy 2.5），其 .pyi 用了 3.12+ 的 `type`
+# 语句；mypy 按 3.10 解析该存根即报 syntax error，且 "errors prevented further
+# checking" 会让**整个 src** 的类型检查静默停摆——门禁看似只有一条错，实际
+# 一个文件都没检查完，这比报错本身更危险。
+# 代价（如实记录）：numpy 调用点失去类型检查。可接受，因为 values.py 已把
+# numpy 收束在具体模式的实现内部，对外只暴露 Value 协议（本项目自有类型，
+# 仍受 strict 检查）。CI 的 py3.12 腿会用真存根做一次完整校验。
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "specs/cases"]
 # 显式 marker 注册：未注册 marker 在 strict 模式下报错，防止 typo 静默失效
