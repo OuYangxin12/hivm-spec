@@ -127,5 +127,7 @@ spec.op(
 
 # --- checks 段：要生成的工具 ----------------------------------------------
 
+# unroll_bound=16：未知 trip 循环的缺省展开界（M2）。静态 trip 全量展开不受此限；
+# 界只影响探索口径，结论恒携带"展开界"限定语（T2.5）。
 spec.check("ub_occupancy", spaces=["ub", "cbuf"])
-spec.check("timeline", scheduling="conservative", strategies=4, unroll_bound=3)
+spec.check("timeline", scheduling="conservative", strategies=4, unroll_bound=16)

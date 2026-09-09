@@ -15,7 +15,7 @@ from typing import Any
 from hivm_spec.occupancy import ENGINE_VERSION as OCC_VERSION
 from hivm_spec.occupancy import OccupancyResult, analyze_occupancy
 from hivm_spec.verdict import Finding, ToolResult, Verdict
-from hivm_spec.vir import VModule
+from hivm_spec.vir import SyncKind, VModule
 
 __all__ = ["config_spec_hash", "load_config", "run_tool", "run_ub_occupancy"]
 
@@ -210,16 +210,310 @@ def _decide_verdict(module: VModule, occ: OccupancyResult, trust: str) -> Verdic
     return Verdict.OK
 
 
-#: 工具名 → 运行函数
+# ---------------------------------------------------------------------------
+# 时序图工具（T2.1–T2.5，§7.2）：不需要锚点 IR——死锁是待验 IR 同步结构的
+# 内在性质（D12/R2）。判定分两层：确定性层（结构性死锁 → DEADLOCK）与
+# 探索层（策略集 × 展开界，结论恒带限定语）。
+# ---------------------------------------------------------------------------
+
+
+def run_timeline(
+    config: dict[str, Any],
+    module: VModule,
+    spec_hash: str = "",
+    *,
+    bound: int | None = None,
+    strategies: tuple[str, ...] | None = None,
+) -> ToolResult:
+    """时序图工具：pipe/event 时间线 + 结构性死锁判定。"""
+    from hivm_spec import timeline as tl
+
+    trust = _trust_of(config)
+
+    check_cfg = next((c for c in config.get("checks", []) if c["name"] == "timeline"), None)
+    if check_cfg is None:
+        return ToolResult(
+            tool="timeline",
+            verdict=Verdict.UNTRUSTED_DESCRIPTION,
+            spec_hash=spec_hash,
+            engine_version=tl.TIMELINE_ENGINE_VERSION,
+            trust=trust,
+            ir_fingerprint=module.fingerprint(),
+            diagnostics=[
+                Finding(
+                    severity="error",
+                    message="描述未声明 timeline check——无法确定调度口径（策略集/展开界）",
+                    rule="assemble/missing-check",
+                )
+            ],
+        )
+
+    opts = check_cfg.get("options", {}) or {}
+    bound = bound if bound is not None else int(opts.get("unroll_bound", tl.DEFAULT_BOUND))
+    if bound < 1:
+        return ToolResult(
+            tool="timeline",
+            verdict=Verdict.UNTRUSTED_DESCRIPTION,
+            spec_hash=spec_hash,
+            engine_version=tl.TIMELINE_ENGINE_VERSION,
+            trust=trust,
+            ir_fingerprint=module.fingerprint(),
+            diagnostics=[
+                Finding(
+                    severity="error",
+                    message=f"展开界非法：{bound}（须 ≥1）",
+                    rule="assemble/bad-bound",
+                )
+            ],
+        )
+    if strategies is None:
+        strategies = (*tl.STRATEGIES, *(f"random(seed={k})" for k in tl.RANDOM_SEEDS))
+    pipe_priority = {name: idx for idx, name in enumerate(config.get("vm", {}).get("pipes", []))}
+
+    expansion = tl.expand_steps(module, bound)
+    deadlocks = tl.structural_fixpoint(
+        expansion.steps, expansion.truncated, tl.events_with_any_set(module)
+    )
+    sims = [tl.simulate(expansion.steps, s, pipe_priority) for s in strategies]
+
+    # -- 分析缺口盘点（FR4：缺口可见，不静默） ----------------------------
+    sync_steps = [st for st in expansion.steps if st.sync is not None]
+    unanalyzable = [
+        st
+        for st in sync_steps
+        if st.sync is not None and tl.event_of(st) is None and st.sync.kind != SyncKind.PIPE_BARRIER
+    ]
+    n_sets = sum(1 for s in module.syncs if s.kind in _TL_SET_KINDS)
+    n_waits = sum(1 for s in module.syncs if s.kind in _TL_WAIT_KINDS)
+    n_barriers = sum(1 for s in module.syncs if s.kind is SyncKind.PIPE_BARRIER)
+    events_stat: dict[str, dict[str, int]] = {}
+    for s in module.syncs:
+        if s.event_id is None:
+            continue
+        slot = events_stat.setdefault(str(s.event_id), {"sets": 0, "waits": 0})
+        if s.kind in _TL_SET_KINDS:
+            slot["sets"] += 1
+        elif s.kind in _TL_WAIT_KINDS:
+            slot["waits"] += 1
+
+    # -- 策略层观察（schedule 依赖，不进 verdict） -------------------------
+    strategy_blocked: list[dict[str, Any]] = []
+    for sim in sims:
+        for seq in sim.blocked:
+            st = expansion.steps[seq]
+            ev = tl.event_of(st)
+            # 确定性层已判定为死锁的 wait 不重复报告
+            if any(d.step_seq == seq for d in deadlocks):
+                continue
+            strategy_blocked.append(
+                {
+                    "strategy": sim.strategy,
+                    "step_seq": seq,
+                    "event_id": ev,
+                    "loc": st.node.loc.describe(),
+                    "message": (
+                        f"策略 {sim.strategy} 下 wait(事件 {ev}) 受阻——schedule 依赖观察，"
+                        "非确定性死锁判定"
+                    ),
+                }
+            )
+
+    # -- verdict 裁决：DEADLOCK > COVERAGE_GAP > OK ------------------------
+    if deadlocks:
+        verdict = Verdict.DEADLOCK
+    elif not module.syncs:
+        # 空洞 OK 防线（同占用引擎的 is_vacuous）：没有任何同步结构时，
+        # "未发现死锁"不是结论而是无知。
+        verdict = Verdict.COVERAGE_GAP
+    elif not module.coverage.is_complete or unanalyzable:
+        verdict = Verdict.COVERAGE_GAP
+    else:
+        verdict = Verdict.OK
+
+    # -- 探索层结论措辞（T2.5：禁止无条件"无死锁"） ------------------------
+    strategy_label = "/".join(strategies)
+    claim = f"在{{{strategy_label}}}×{{展开界={bound}}}内未发现死锁"
+    if expansion.truncated:
+        claim += "（循环展开截断——负向结论仅在该界内成立）"
+    if verdict is Verdict.DEADLOCK:
+        claim += "；另有确定性死锁判定，见 deadlocks/诊断"
+    elif verdict is Verdict.COVERAGE_GAP:
+        claim = "覆盖不完整，探索层结论已降级为 COVERAGE_GAP，不构成'无死锁'依据"
+
+    # -- diagnostics -------------------------------------------------------
+    findings: list[Finding] = []
+    for d in deadlocks:
+        findings.append(
+            Finding(
+                severity="error",
+                message=d.message,
+                loc=d.loc,
+                rule=f"timeline/{d.rule}",
+                extra={"event_id": d.event_id, "step_seq": d.step_seq},
+            )
+        )
+    for gap in module.coverage.gaps:
+        findings.append(
+            Finding(
+                severity="warning",
+                message=gap.detail,
+                loc=gap.loc,
+                rule=f"coverage/{gap.kind.value}",
+                extra={"op": gap.op} if gap.op else {},
+            )
+        )
+    if not module.syncs:
+        findings.append(
+            Finding(
+                severity="error",
+                message=(
+                    "未在 IR 中发现任何同步结构（set/wait/barrier）——本结论不代表"
+                    "『无死锁风险』，而代表『未能分析』"
+                ),
+                rule="timeline/vacuous",
+            )
+        )
+    elif unanalyzable:
+        findings.append(
+            Finding(
+                severity="warning",
+                message=(
+                    f"{len(unanalyzable)} 个 set/wait 未标注事件 id，无法配对分析"
+                    "——涉及它们的结论不可信"
+                ),
+                loc=unanalyzable[0].node.loc,
+                rule="timeline/unanalyzable-event",
+            )
+        )
+    if expansion.truncated:
+        for note in expansion.truncation_notes:
+            findings.append(Finding(severity="warning", message=note, rule="timeline/truncation"))
+    if verdict is not Verdict.DEADLOCK:
+        for item in strategy_blocked:
+            findings.append(
+                Finding(
+                    severity="warning",
+                    message=item["message"],
+                    loc=None,
+                    rule="timeline/strategy-blocked",
+                    extra={"strategy": item["strategy"], "event_id": item["event_id"]},
+                )
+            )
+    if verdict is Verdict.OK:
+        findings.append(Finding(severity="info", message=claim, rule="timeline/exploration-claim"))
+
+    # -- details（JSON 契约） ----------------------------------------------
+    lane_order = list(config.get("vm", {}).get("pipes", []))
+    for st in expansion.steps:
+        if st.lane not in lane_order:
+            lane_order.append(st.lane)
+    details: dict[str, Any] = {
+        "bound": bound,
+        "strategies": list(strategies),
+        "pipe_order": lane_order,
+        "truncated": expansion.truncated,
+        "truncation_notes": list(expansion.truncation_notes),
+        "static_full_loops": expansion.static_full_loops,
+        "steps_total": len(expansion.steps),
+        "sync_counts": {"set": n_sets, "wait": n_waits, "barrier": n_barriers},
+        "events": dict(sorted(events_stat.items(), key=lambda kv: int(kv[0]))),
+        "deadlocks": [
+            {
+                "rule": d.rule,
+                "event_id": d.event_id,
+                "step_seq": d.step_seq,
+                "loc": d.loc.describe(),
+                "message": d.message,
+            }
+            for d in deadlocks
+        ],
+        "exploration": {
+            "claim": claim,
+            "strategy_blocked": strategy_blocked,
+        },
+        "timelines": {},
+    }
+    for sim in sims:
+        details["timelines"][sim.strategy] = _timeline_details(expansion, sim)
+
+    return ToolResult(
+        tool="timeline",
+        verdict=verdict,
+        spec_hash=spec_hash,
+        engine_version=tl.TIMELINE_ENGINE_VERSION,
+        trust=trust,
+        ir_fingerprint=module.fingerprint(),
+        details=details,
+        diagnostics=findings,
+    )
+
+
+#: details 中每条时间线的步数上限（JSON 体积护栏；完整轨迹走 Chrome Trace）
+_TIMELINE_STEP_CAP = 400
+_TL_SET_KINDS = frozenset({SyncKind.SET_FLAG, SyncKind.SYNC_BLOCK_SET})
+_TL_WAIT_KINDS = frozenset({SyncKind.WAIT_FLAG, SyncKind.SYNC_BLOCK_WAIT})
+
+
+def _timeline_details(expansion: Any, sim: Any) -> dict[str, Any]:
+    """单策略时间线的可序列化视图（执行序前 _TIMELINE_STEP_CAP 步）。
+
+    **受阻 wait 也必须出现在视图里**（坏消息不可隐藏，FR6 视图侧延伸）：
+    追加在执行序之后并带 blocked 标记，甘特图据此画 `×`、trace 据此标注。
+    """
+    from hivm_spec import timeline as tl
+
+    steps: list[dict[str, Any]] = []
+    for pos, seq in enumerate(sim.order[:_TIMELINE_STEP_CAP]):
+        st = expansion.steps[seq]
+        steps.append(
+            {
+                "pos": pos,
+                "seq": seq,
+                "op": st.node.op,
+                "lane": st.lane,
+                "kind": st.sync.kind.value if st.sync is not None else "op",
+                "event": tl.event_of(st),
+                "iter": ".".join(str(x) for x in st.loop_path),
+                "loc": st.node.loc.describe(),
+                "blocked": False,
+            }
+        )
+    room = max(0, _TIMELINE_STEP_CAP - len(steps))
+    for k, seq in enumerate(sim.blocked[:room]):
+        st = expansion.steps[seq]
+        steps.append(
+            {
+                "pos": len(steps) + k,
+                "seq": seq,
+                "op": st.node.op,
+                "lane": st.lane,
+                "kind": st.sync.kind.value if st.sync is not None else "op",
+                "event": tl.event_of(st),
+                "iter": ".".join(str(x) for x in st.loop_path),
+                "loc": st.node.loc.describe(),
+                "blocked": True,
+            }
+        )
+    return {
+        "order": list(sim.order[:_TIMELINE_STEP_CAP]),
+        "order_truncated": len(sim.order) > _TIMELINE_STEP_CAP,
+        "steps": steps,
+        "blocked": list(sim.blocked),
+    }
+
+
+#: 工具名 → 运行函数（timeline 走 run_timeline 的 kwargs 分发）
 _TOOLS = {"ub_occupancy": run_ub_occupancy}
 
 
-def run_tool(name: str, config: dict[str, Any], module: VModule, spec_hash: str = "") -> ToolResult:
+def run_tool(
+    name: str, config: dict[str, Any], module: VModule, spec_hash: str = "", **kwargs: Any
+) -> ToolResult:
+    if name == "timeline":
+        return run_timeline(config, module, spec_hash, **kwargs)
     fn = _TOOLS.get(name)
     if fn is None:
-        raise KeyError(
-            f"未知工具 {name!r}；已实现：{sorted(_TOOLS)}。timeline/equivalence 见 M2/M3"
-        )
+        raise KeyError(f"未知工具 {name!r}；已实现：ub_occupancy / timeline。equivalence 见 M3")
     return fn(config, module, spec_hash)
 
 

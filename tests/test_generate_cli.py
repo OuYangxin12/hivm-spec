@@ -256,12 +256,19 @@ def test_cli_unimplemented_tools_still_report_pending(
 ) -> None:
     """未实现的工具必须显式 PENDING，不得假成功（FR7）。
 
-    T1.6 起 ub_occupancy 已实现，故此处改测 timeline/equivalence——
-    它们的契约已定义而实现属 M2/M3。
+    M2 起 timeline 已实现，未实现名单只剩 equivalence（M3）。
     """
-    for tool in ("timeline", "equivalence"):
-        assert main(["tool", tool, "x.mlir"]) == EXIT_PENDING
-        assert "PENDING" in capsys.readouterr().err
+    assert main(["tool", "equivalence", "x.mlir"]) == EXIT_PENDING
+    assert "PENDING" in capsys.readouterr().err
+
+
+def test_cli_implemented_tools_do_not_report_pending(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """已实现的工具不得停留在 PENDING（M2 回归守卫：timeline 必须真跑）。"""
+    # x.mlir 不存在 → 走"IR 文件不存在"路径（exit 1），但绝不能是 PENDING(3)
+    assert main(["tool", "timeline", "x.mlir"]) == EXIT_FAIL
+    assert "PENDING" not in capsys.readouterr().err
 
 
 def test_cli_tool_reports_missing_config_actionably(

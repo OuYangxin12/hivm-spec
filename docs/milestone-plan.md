@@ -62,16 +62,16 @@
 | T1.7 ✅ | 双 kernel 验收：L0 bring-up + cv-pipelining 目标场景（18 分节 + preload） | 19 份全部出图，单 kernel 最大 **0.20s**（余量 51×）；实测值已回填 D10 表 |
 | T1.8 ✅ | AGENTS.md spec-gate 首版（§6.5）：按改动性质选最小执行集 + 基线对照 | 指令入库 |
 
-## 4. M2：时序图与同步语义
+## 4. M2：时序图与同步语义 ✅（2026-09-09 完成，实测见 `docs/tasks/M2.md` §8）
 
-| 任务 | 内容 | 验收 |
-|---|---|---|
-| T2.1 | pipe/event 状态机（消费 vm 段 + **VIR**，不另建遍历核 D6）：op→pipe 归属、set/wait/pipe_barrier/sync_block 语义执行 | 单核顺序策略下时间线正确；无绕过 VIR 的 MLIR 访问 |
-| T2.2 | 交错策略集 + 有界迭代展开参数（顺序/轮转/pipe 优先/K 随机种子） | 策略可配置、可复现（种子化） |
-| T2.3 | wait-for 图确定性层：结构性死锁（不可满足 wait/环）判定，确定性结论 | 注入无配对 wait 被确定性判定 |
-| T2.4 | 时序渲染：iteration×pipe 甘特 + wait/set 依赖标注 + Chrome Trace Event Format 输出（perfetto 可视化） | cv kernel 图可读；trace 可导入 perfetto |
-| T2.5 | 报告口径：探索层结论统一"在{策略集}×{展开界}内未发现"（D4/OD2） | 结论字段落 schema |
-| T2.6 | cv kernel 验收：注入配对缺陷（跨迭代 wait/set 错位）在图或结论中暴露 | AC1 死锁维（观测层） |
+| 任务 | 内容 | 验收 | 状态 |
+|---|---|---|---|
+| T2.1 | pipe/event 状态机（消费 vm 段 + **VIR**，不另建遍历核 D6）：op→pipe 归属、set/wait/pipe_barrier/sync_block 语义执行 | 单核顺序策略下时间线正确；无绕过 VIR 的 MLIR 访问 | ✅ |
+| T2.2 | 交错策略集 + 有界迭代展开参数（顺序/轮转/pipe 优先/K 随机种子） | 策略可配置、可复现（种子化） | ✅ |
+| T2.3 | wait-for 图确定性层：结构性死锁（不可满足 wait/环）判定，确定性结论 | 注入无配对 wait 被确定性判定 | ✅ |
+| T2.4 | 时序渲染：iteration×pipe 甘特 + wait/set 依赖标注 + Chrome Trace Event Format 输出（perfetto 可视化） | cv kernel 图可读；trace 可导入 perfetto | ✅ |
+| T2.5 | 报告口径：探索层结论统一"在{策略集}×{展开界}内未发现"（D4/OD2） | 结论字段落 schema | ✅ |
+| T2.6 | cv kernel 验收：注入配对缺陷（跨迭代 wait/set 错位）在图或结论中暴露 | AC1 死锁维（观测层） | ✅ |
 
 ## 5. M3：等价验证（具体执行档）
 

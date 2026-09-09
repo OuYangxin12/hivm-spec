@@ -13,6 +13,7 @@ VIR；任何引擎绕过 VIR 直接遍历 MLIR 即为架构违规。
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -608,8 +609,9 @@ class IREngine:
         core = ""
         pipe = ""
 
-        # 事件 id 来自属性（flag = 15）或 assembly 里的 <EVENT_IDn>
-        for key in ("flag", "event_id", "eventId"):
+        # 事件 id 优先取具名属性（static_event_id='…EVENT_ID0' /
+        # static_flag_id='15 : i64'），再退回 assembly 的 <EVENT_IDn>
+        for key in ("static_event_id", "static_flag_id", "flag", "event_id", "eventId"):
             if key in node.attrs:
                 m = re.search(r"-?\d+", node.attrs[key])
                 if m:
@@ -623,9 +625,23 @@ class IREngine:
         m_core = re.search(r"<(CUBE|VECTOR|AIC|AIV)>", str(op))
         if m_core:
             core = m_core.group(1)
-        m_pipe = re.search(r"<(PIPE_[A-Z0-9_]+)>", str(op))
-        if m_pipe:
-            pipe = m_pipe.group(1)
+
+        # 泳道归属：正则扫 str(op) 会拿到第一个 <PIPE_*>——对 sync_block_* 而言
+        # 那是 tpipe（对端泳道）而非自身。按 op 语义取具名属性：
+        #   set_flag → set_pipe（执行 set 的泳道）
+        #   wait_flag → wait_pipe（被阻塞的泳道）
+        #   其余（sync_block_* / pipe_barrier）→ 自身 pipe 属性
+        if kind in (SyncKind.SET_FLAG, SyncKind.WAIT_FLAG):
+            pipe = self._attr_pipe(
+                node.attrs,
+                "set_pipe" if kind is SyncKind.SET_FLAG else "wait_pipe",
+            )
+        else:
+            pipe = self._attr_pipe(node.attrs, "pipe")
+        if not pipe:
+            m_pipe = re.search(r"<(PIPE_[A-Z0-9_]+)>", str(op))
+            if m_pipe:
+                pipe = m_pipe.group(1)
 
         self._syncs.append(
             VSync(
@@ -637,6 +653,12 @@ class IREngine:
                 core=core,
             )
         )
+
+    @staticmethod
+    def _attr_pipe(attrs: Mapping[str, str], key: str) -> str:
+        """从形如 '#hivm.pipe<PIPE_MTE2>' 的属性值里取泳道名。"""
+        m = re.search(r"PIPE_[A-Z0-9_]+", attrs.get(key, ""))
+        return m.group() if m else ""
 
 
 def lower_module_text(
