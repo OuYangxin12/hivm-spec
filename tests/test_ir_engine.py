@@ -256,6 +256,34 @@ def test_load_bindings_fails_loudly_when_unavailable() -> None:
 
 
 # ---------------------------------------------------------------------------
+# T3.0：sync_event_slots 切分（纯函数，无需 bindings）
+# ---------------------------------------------------------------------------
+
+
+def test_split_macro_slots_handles_nested_angle_brackets() -> None:
+    """槽位切分必须按尖括号深度扫描，不能用非贪婪正则。
+
+    回归的是一个真实 bug：`<(.*?)>` 会停在内层 `#hivm.pipe<PIPE_MTE2>` 的 `>`
+    上，把槽位截成 `#hivm.pipe<PIPE_MTE2`——模式与 event id 全部丢失，槽位被
+    **静默跳过**（不报错、不降级），T3.0 的修复等于没生效。
+    """
+    from hivm_spec.ir_engine import _split_macro_slots
+
+    raw = (
+        "[#hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, set>, "
+        "#hivm.sync_event_slot<#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_FIX>, wait, <EVENT_ID3>>]"
+    )
+    slots = _split_macro_slots(raw)
+    assert len(slots) == 2
+    assert slots[0] == "#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, set"
+    assert "EVENT_ID3" in slots[1]
+
+    # 括号不闭合（属性文本被截断）：宁可漏也不猜
+    assert _split_macro_slots("[#hivm.sync_event_slot<#hivm.pipe<PIPE_V>, set") == []
+    assert _split_macro_slots("") == []
+
+
+# ---------------------------------------------------------------------------
 # 端到端（需 bindings）
 # ---------------------------------------------------------------------------
 
@@ -560,3 +588,60 @@ def test_no_l1_case_yields_a_vacuous_ok(tmp_path: pathlib.Path) -> None:
         buffers = sum(s["buffers"] for s in doc["details"]["spaces"].values())
         assert buffers > 0, f"{ir.name} 给出 OK 但一个 buffer 都没分析到——这是空洞结论"
     assert checked >= 10, f"L1 语料应 ≥10 份，实测 {checked}"
+
+
+@requires_bindings
+@pytest.mark.skipif(not bindings_available(), reason="PENDING(env) bindings 不可用")
+def test_macro_sync_event_slots_are_recorded() -> None:
+    """真实 IR 上：macro 内部 set/wait 进 syncs，未 pin event id 则降级。
+
+    形态取自主仓 test/Dialect/HIVM/SyncSolver/hivm-gss-custom-macro-set-slot.mlir
+    （T3.0 对拍找到的 2 例 wait-first 之一）。
+    """
+    from hivm_spec.ir_engine import lower_module_text
+    from hivm_spec.vir import GapKind, SyncKind
+
+    spec = _toy_spec()
+    _, pipes = effects_from_spec(spec)
+    modeled = {o.op for o in spec.ops} | {"hivm.hir.custom_macro"}  # type: ignore[attr-defined]
+
+    # 基底取已入库并验证可解析的 L0 语料，只替换槽位——手拼 custom_macro 的
+    # assembly 极易语法错（operandSegmentSizes/name 等隐式要求）。
+    base = (CORPUS / "l0" / "macro_internal_set_slot.mlir").read_text()
+    pinned_slot = (
+        "#hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, set, <EVENT_ID0>>"
+    )
+    assert pinned_slot in base, "语料的槽位形态已变，测试需同步"
+
+    def _ir(slot: str) -> str:
+        return base.replace(pinned_slot, slot)
+
+    # pinned event id → 补一条隐式 SET（macro 内部 set，IR 中不可见）
+    res = lower_module_text(base, modeled, source="p.mlir", op_pipes=pipes)
+    implicit = [s for s in res.module.syncs if s.implicit]
+    assert len(implicit) == 1
+    assert implicit[0].kind is SyncKind.SET_FLAG
+    assert implicit[0].event_id == 0
+    assert implicit[0].pipe == "PIPE_MTE2"  # set 记在 set_pipe
+
+    # wait 模式 → 补隐式 WAIT，泳道取 wait_pipe
+    w = _ir("#hivm.sync_event_slot<#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_FIX>, wait, <EVENT_ID2>>")
+    res_w = lower_module_text(w, modeled, source="w.mlir", op_pipes=pipes)
+    iw = [s for s in res_w.module.syncs if s.implicit]
+    assert len(iw) == 1
+    assert iw[0].kind is SyncKind.WAIT_FLAG
+    assert iw[0].event_id == 2
+    assert iw[0].pipe == "PIPE_FIX"
+
+    # internal（默认）→ macro 内部自成配对，对外净效应为零，不记账
+    intl = _ir("#hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, internal>")
+    res_i = lower_module_text(intl, modeled, source="i.mlir", op_pipes=pipes)
+    assert [s for s in res_i.module.syncs if s.implicit] == []
+    assert res_i.module.coverage.gaps == ()
+
+    # 未 pin event id → 不猜归属，登记覆盖缺口（猜错会把账记到别的 flag 上）
+    unpinned = _ir("#hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, set>")
+    res_u = lower_module_text(unpinned, modeled, source="u.mlir", op_pipes=pipes)
+    assert [s for s in res_u.module.syncs if s.implicit] == []
+    kinds = {g.kind for g in res_u.module.coverage.gaps}
+    assert GapKind.UNRECOGNIZED_STRUCTURE in kinds

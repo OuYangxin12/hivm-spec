@@ -106,6 +106,21 @@
       "notes": "最小 UB 占用回路"
     },
     {
+      "path": "l0/macro_internal_set_slot.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "features": [
+        "custom_macro",
+        "sync_event_slots",
+        "macro_sync_set",
+        "wait_flag",
+        "event_id"
+      ],
+      "notes": "健康对照（T3.0 对拍后补）：不透明 macro 的内部 set —— sync_event_slot<...,set,<EVENT_ID0>> 表示 set 在 macro 内部、IR 不可见，GSS 在 macro 后注入 wait_flag。形态取自主仓 test/Dialect/HIVM/SyncSolver/hivm-gss-custom-macro-set-slot.mlir。若不解析槽位，该形态只能靠 INITIAL_ARM=1 侥幸判 OK（理由错、结论对），初态改 0 即变假阳性",
+      "sha256": "sha256:1576f075b02c47dabae6ce17c37c4a119fefe009c2737921eb59e6fc2945254a",
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)"
+    },
+    {
       "path": "l0/nested_loop_scope.mlir",
       "layer": "l0",
       "origin": "handwritten",

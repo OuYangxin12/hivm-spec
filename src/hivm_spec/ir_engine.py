@@ -104,6 +104,34 @@ class LowerResult:
     engine_notes: list[str] = field(default_factory=list)
 
 
+def _split_macro_slots(raw: str) -> list[str]:
+    """切出 `sync_event_slots` 里每个槽位的内容（不含最外层尖括号）。
+
+    不能用正则：槽位内部嵌套着 `#hivm.pipe<PIPE_MTE2>`，非贪婪 `<(.*?)>` 会停在
+    内层 `>` 上，把 `<#hivm.pipe<PIPE_MTE2>, ..., set>` 截成 `#hivm.pipe<PIPE_MTE2`
+    ——模式与 event id 全部丢失，槽位被静默跳过。故按尖括号深度扫描。
+    """
+    marker = "#hivm.sync_event_slot<"
+    slots: list[str] = []
+    pos = 0
+    while True:
+        start = raw.find(marker, pos)
+        if start < 0:
+            return slots
+        i = start + len(marker)
+        depth = 1
+        while i < len(raw) and depth:
+            if raw[i] == "<":
+                depth += 1
+            elif raw[i] == ">":
+                depth -= 1
+            i += 1
+        if depth:  # 括号不闭合：属性文本被截断，宁可漏也不猜
+            return slots
+        slots.append(raw[start + len(marker) : i - 1])
+        pos = i
+
+
 def _parse_loc(loc_str: str, fallback_file: str) -> Loc:
     m = LOC_RE.search(loc_str)
     if m:
@@ -356,6 +384,12 @@ class IREngine:
 
         if name in SYNC_KINDS:
             self._record_sync(node, name, op)
+        # 任意 op 都可能带 sync_event_slots（实际是 CustomMacroOp）——其中
+        # macro_sync=set/wait 表示同步发生在 macro **内部**，IR 里没有对应的
+        # set_flag/wait_flag op。不记账会让规则 A/C 误判（T3.0 对拍发现，
+        # 见 docs/crosscheck/T3.0-flag-semantics.md §5）。
+        if "sync_event_slots" in node.attrs:
+            self._record_macro_slots(node)
 
         return node
 
@@ -659,6 +693,79 @@ class IREngine:
         """从形如 '#hivm.pipe<PIPE_MTE2>' 的属性值里取泳道名。"""
         m = re.search(r"PIPE_[A-Z0-9_]+", attrs.get(key, ""))
         return m.group() if m else ""
+
+    def _record_macro_slots(self, node: VNode) -> None:
+        """把 `sync_event_slots` 里 macro **内部**的 set/wait 计入同步账目。
+
+        背景（T3.0 对拍，`docs/crosscheck/T3.0-flag-semantics.md` §5）：
+        `CustomMacroOp` 的槽位有三种 `macro_sync` 模式——
+
+        - `internal`（默认）：GSS 只分配 event id，macro 内部自成 set+wait 配对，
+          对外净效应为零 → **不记账**（记了反而制造虚假供需）；
+        - `set`：macro 内部 set，GSS 在 macro **后**注入 wait_flag
+          → IR 里只见 wait，须补一条隐式 **SET**；
+        - `wait`：macro 内部 wait，GSS 在 macro **前**注入 set_flag
+          → IR 里只见 set，须补一条隐式 **WAIT**。
+
+        不补的后果不是"少一条诊断"，而是判定理由错误：`macro_sync=set` 形态在
+        `INITIAL_ARM=1` 下靠"消费初始装载"侥幸判 OK，一旦初态改 0 立刻变假阳性。
+
+        **事件 id 无法确定时不猜**：槽位未 pin event id（GSS 运行前的常态）就
+        登记 `macro-slot-unpinned` 覆盖缺口，让 verdict 走 COVERAGE_GAP，而不是
+        默认成 0 号事件——猜错事件归属会把账记到别的 flag 上（NFR2）。
+        """
+        raw = node.attrs.get("sync_event_slots", "")
+        for slot in _split_macro_slots(raw):
+            mode = "internal"
+            for cand in ("internal", "wait", "set"):
+                # 模式是独立的裸标识符，不能匹配到 pipe 名里的子串
+                if re.search(rf"(?<![\w<]){cand}(?![\w>])", slot):
+                    mode = cand
+                    break
+            if mode == "internal":
+                continue  # 内部自洽配对，对外净效应为零
+
+            m_ev = re.search(r"EVENT_ID(\d+)", slot)
+            if m_ev is None:
+                self._gaps.append(
+                    Gap(
+                        kind=GapKind.UNRECOGNIZED_STRUCTURE,
+                        detail=(
+                            f"{node.op} 的 sync_event_slots 槽位 macro_sync={mode}，"
+                            f"但未 pin event id——macro 内部的 "
+                            f"{'set' if mode == 'set' else 'wait'} 无法归属到具体"
+                            f"事件，同步账目不完整（不猜事件归属：猜错会把账记到"
+                            f"别的 flag 上）"
+                        ),
+                        loc=node.loc,
+                        op=node.op,
+                    )
+                )
+                continue
+
+            event_id = int(m_ev.group(1))
+            pipes = re.findall(r"PIPE_[A-Z0-9_]+", slot)
+            # 槽位形态：<set_pipe, wait_pipe, mode[, event]>，与 set_flag/wait_flag
+            # 的参数顺序一致（T3.0 §1 已确证）。泳道归属同显式 op 口径：
+            # set 记在 set_pipe、wait 记在 wait_pipe。
+            if mode == "set":
+                kind = SyncKind.SET_FLAG
+                pipe = pipes[0] if pipes else ""
+            else:
+                kind = SyncKind.WAIT_FLAG
+                pipe = pipes[1] if len(pipes) > 1 else (pipes[0] if pipes else "")
+
+            self._syncs.append(
+                VSync(
+                    node_id=node.id,
+                    kind=kind,
+                    loc=node.loc,
+                    event_id=event_id,
+                    pipe=pipe or node.pipe,
+                    core="",
+                    implicit=True,
+                )
+            )
 
 
 def lower_module_text(

@@ -501,3 +501,65 @@ def test_total_step_cap_truncates_honestly() -> None:
     exp = expand_steps(m, 100000)
     assert exp.truncated is True
     assert len(exp.steps) <= 4096 + 2  # 上限 + 少量缓冲
+
+
+# ---------------------------------------------------------------------------
+# T3.0：对拍后补——INITIAL_ARM 的代价与不透明 macro 的隐式同步
+# ---------------------------------------------------------------------------
+
+
+def test_single_wait_no_set_is_masked_by_initial_arm() -> None:
+    """规则 A 的 1-wait 盲区：`INITIAL_ARM=1` 下单个孤立 wait 判 OK。
+
+    这是初始装载假设的**直接代价**，T3.0 对拍时才被发现：规则 A 要求
+    `blocked_in_both`，而第一个 wait 消费掉初始装载后就"没受阻"，必须有第 2 个
+    wait 才触发。既有语料 waits_before_sets_deadlock.mlir 用了 2 个 wait，
+    正好跨过这个盲区，所以一直没暴露。
+
+    本测试**锁定当前行为而非主张它正确**——若 INITIAL_ARM 将来因硬件 golden
+    改为 0，此测试必须一并修改，那正是提醒改动影响面的信号。
+    详见 docs/crosscheck/T3.0-flag-semantics.md §5。
+    """
+    w, ws = _sync("w0", "wait_flag", 7, "PIPE_V")
+    m = _module((w,), (ws,))
+    res = _run(m)
+    assert res.verdict is Verdict.OK
+    # 供需账目仍如实记账：1 个 wait、0 个 set、1 个初始装载 → 不短缺
+    assert res.details["arm_supply"] == []
+
+    # 对照：第 2 个 wait 使供给耗尽，规则 A 立刻触发
+    w2, ws2 = _sync("w1", "wait_flag", 7, "PIPE_V")
+    res2 = _run(_module((w, w2), (ws, ws2)))
+    assert res2.verdict is Verdict.DEADLOCK
+    assert [d["rule"] for d in res2.details["deadlocks"]] == ["unpaired-wait"]
+
+
+def test_macro_internal_set_counts_as_supply() -> None:
+    """不透明 macro 的内部 set 必须计入供需账目（T3.0 §5）。
+
+    `sync_event_slot<..., set, <EVENT_IDn>>` 表示 set 发生在 macro 内部、
+    IR 中不可见。若不记账，该形态只能靠"消费初始装载"侥幸判 OK——理由错、
+    结论对；而一旦 INITIAL_ARM 改为 0 就立刻变成假阳性 DEADLOCK。
+
+    故此处用 **2 个** wait：绕过 1-wait 盲区，让"是否记账"成为判定的唯一变量。
+    """
+    implicit_set = VSync(
+        node_id="macro0",
+        kind=SyncKind.SET_FLAG,
+        loc=Loc(file="t.mlir", line=3),
+        event_id=0,
+        pipe="PIPE_MTE2",
+        implicit=True,
+    )
+    macro = VNode(id="macro0", op="hivm.hir.custom_macro", loc=implicit_set.loc, pipe="PIPE_V")
+    w1, ws1 = _sync("w0", "wait_flag", 0, "PIPE_MTE1")
+    w2, ws2 = _sync("w1", "wait_flag", 0, "PIPE_MTE1")
+
+    # 记账后：2 wait vs 1 隐式 set + 1 初始装载 → 供给刚好够，健康
+    res = _run(_module((macro, w1, w2), (implicit_set, ws1, ws2)))
+    assert res.verdict is Verdict.OK
+
+    # 不记账（模拟修复前）：2 wait vs 0 set → 规则 A 假阳性
+    res_before = _run(_module((macro, w1, w2), (ws1, ws2)))
+    assert res_before.verdict is Verdict.DEADLOCK
+    assert [d["rule"] for d in res_before.details["deadlocks"]] == ["unpaired-wait"]
