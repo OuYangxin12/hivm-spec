@@ -206,7 +206,8 @@ def test_cli_gen_produces_config_and_ledger(tmp_path: Path) -> None:
     assert ledger.is_file()
     doc = json.loads(out.read_text(encoding="utf-8"))
     assert doc["spec_name"] == "hivm_toy"
-    assert {c["name"] for c in doc["checks"]} == {"ub_occupancy", "timeline"}
+    # equivalence 于 M3/T3.3 加入（带 rtol/atol/round_mode，进 spec_hash）
+    assert {c["name"] for c in doc["checks"]} == {"ub_occupancy", "timeline", "equivalence"}
 
 
 def test_cli_gen_is_byte_reproducible(tmp_path: Path) -> None:
