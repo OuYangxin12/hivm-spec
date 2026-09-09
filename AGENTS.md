@@ -23,6 +23,16 @@ python scripts/spec_gate.py --base origin/main --head HEAD
 pytest specs/cases -q
 ```
 
+**本地 merge 到 main（未推送、CI 跑不到）时，必须先跑本地合入门禁：**
+
+```bash
+python scripts/merge_gate.py          # 全绿方可 merge，证据落 build/merge-gate.json
+```
+
+远端分支保护与 CI 在本地合入路径上结构性失效（feature 分支没上过远端）。
+该脚本跑 CI 门禁的本地等价物并留下可审计证据；工作区不干净即拒绝。
+详见 milestone-plan §8「本地合入例外」。
+
 **改 HIVM pass（主仓侧）后，须跑对应 spec 工具**（M1 起可用）：
 
 ```bash
@@ -137,8 +147,13 @@ hivm-spec tool equivalence   before.mlir after.mlir     # 语义等效：before 
 ## 9. 工程约定
 
 - **PR 流程**：main 禁直推；feature 分支 → PR → 合入。单人阶段免**人工**审批，
-  但**机器门禁不可绕过**（D5）。修改 `.github/`、`scripts/spec_gate.py`、本文件
-  需格外谨慎——能放松门禁的人等于能绕过防自欺。
+  但**机器门禁不可绕过**（D5）。修改 `.github/`、`scripts/spec_gate.py`、
+  `scripts/merge_gate.py`、本文件需格外谨慎——能放松门禁的人等于能绕过防自欺。
+  **本地 merge 亦受此约束**：走 `scripts/merge_gate.py`（§1）。
+- **语义假设必须登记（D9 前置）**：按某个方向猜了语义、又没和主仓 C++ 链对拍
+  的口径，一律用 `spec.assume(subject, assumed, risk_direction=..., resolve_by=...)`
+  登记在描述里——不要只写在任务卡散文中（机器读不到，结论里也不声明）。登记后
+  信任自动封顶 `provisional`（`frozen_by_assumption`），对拍销案后才可解除。
 - **Python 版本**：核心 `>=3.10`（cp310 绑定 ABI 地板，勿放宽）；IR 层测试标
   `requires_bindings`。
 - **依赖**：主依赖钉兼容区间（FR8）；环境用 uv，`~/.cache` 只读时
