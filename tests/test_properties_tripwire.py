@@ -21,14 +21,27 @@ from hivm_spec.tripwire import OpRegistry, load_registry, report_coverage
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOY = REPO_ROOT / "specs" / "toy.py"
+CV = REPO_ROOT / "specs" / "cv.py"
 
 
-def _toy_modeled_ops() -> set[str]:
-    spec_obj = importlib.util.spec_from_file_location("toy_tw", TOY)
+def _load_spec(module_name: str, path: Path):
+    spec_obj = importlib.util.spec_from_file_location(module_name, path)
     assert spec_obj and spec_obj.loader
     mod = importlib.util.module_from_spec(spec_obj)
     spec_obj.loader.exec_module(mod)
-    return {op.op for op in mod.spec.ops}
+    return mod.spec
+
+
+def _modeled_ops() -> set[str]:
+    """描述库**并集**的 modeled 集（toy + cv）。
+
+    绊线必须反映**全部入库描述**：T1.0b 起 cv.py 承载 9 个目标 kernel op，
+    若仍只数 toy，会把已建模 op 报成"未建模"——评审（2026-09-09）正是据此
+    发现绊线输出 7.9% 与 M1 卡声称的 15.8% 失同步（P1）。
+    """
+    return {op.op for op in _load_spec("tw_toy", TOY).ops} | {
+        op.op for op in _load_spec("tw_cv", CV).ops
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +165,10 @@ def test_tripwire_reports_coverage_over_all_registered_ops(
 ) -> None:
     """M0 验收：对全量已注册 op 输出覆盖报告。
 
-    **刻意不断言覆盖率下限**：M0 只建模 9 个 op 是预期的，断言下限会诱导
-    为过门槛而虚报建模。绊线的价值是让缺口可见，不是让它好看。
+    **刻意不断言覆盖率下限**：断言下限会诱导为过门槛而虚报建模。
+    绊线的价值是让缺口可见，不是让它好看。口径为描述**并集**（toy + cv）。
     """
-    report = report_coverage(_toy_modeled_ops())
+    report = report_coverage(_modeled_ops())
     with capsys.disabled():
         print("\n" + report.render())
 
@@ -176,14 +189,39 @@ def test_toy_declares_no_op_unknown_to_upstream() -> None:
 
     本项目已有前例：手写 L0 语料时凭想象编造 op 签名，6/6 全错。
     """
-    report = report_coverage(_toy_modeled_ops())
+    report = report_coverage({op.op for op in _load_spec("tw_toy_only", TOY).ops})
     assert report.unknown_to_upstream == (), (
         f"toy 描述含主仓不存在的 op：{report.unknown_to_upstream}"
     )
 
 
+def test_union_declares_no_op_unknown_to_upstream() -> None:
+    """描述并集的每个 op 都必须真实存在于主仓（cv.py 同样不得编造 op 名）。"""
+    report = report_coverage(_modeled_ops())
+    assert report.unknown_to_upstream == (), report.render()
+
+
+def test_tripwire_modeled_matches_generated_ledger() -> None:
+    """锚定：绊线的 modeled 集 == gen 产出的账本覆盖集（防两处口径漂移）。
+
+    评审（2026-09-09）发现：gen 合并 toy+cv 输出"覆盖 18 个 op"，而绊线只数
+    toy 输出 9 个——同一事实两处口径不同步。本测试把两者钉死：任何一侧
+    增删描述而另一侧未跟上，即失败。
+    """
+    from hivm_spec.generate import generate
+
+    spec = _load_spec("tw_anchor_toy", TOY)
+    spec.merge(_load_spec("tw_anchor_cv", CV))
+    result = generate(spec, timestamp="1970-01-01T00:00:00+00:00")
+
+    assert set(result.ledger.entries) == _modeled_ops(), (
+        "绊线口径与 gen 账本覆盖不一致——检查 specs/ 下是否新增了未入库描述，"
+        "或 _modeled_ops 是否漏了某个描述文件"
+    )
+
+
 def test_coverage_groups_are_reported() -> None:
-    report = report_coverage(_toy_modeled_ops())
+    report = report_coverage(_modeled_ops())
     assert report.by_group, "应按分组报告，便于排定建模优先级"
     for _group, (modeled, total) in report.by_group.items():
         assert 0 <= modeled <= total

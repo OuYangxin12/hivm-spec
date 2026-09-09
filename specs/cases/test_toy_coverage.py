@@ -119,12 +119,15 @@ def test_l1_corpus_exists() -> None:
 def test_l1_coverage_is_measured_and_reported(capsys: pytest.CaptureFixture[str]) -> None:
     """对 L1 语料计量描述覆盖率。
 
-    **刻意不断言高覆盖率**：toy 描述只有 6 个 op，对真实语料覆盖率必然很低。
-    此处的价值是**诚实计量**——把差距变成可见数字，供 M1 排定建模优先级；
-    若改为断言"覆盖率 > X%"，就会诱导为过门槛而虚报建模（正是 FR6 要防的）。
+    **刻意不断言高覆盖率**：对真实语料覆盖率必然有限。此处的价值是**诚实
+    计量**——把差距变成可见数字，供排定建模优先级；若改为断言"覆盖率 > X%"，
+    就会诱导为过门槛而虚报建模（正是 FR6 要防的）。
+
+    口径为描述**并集**（`_all_modeled_ops`，toy + cv）：只数 toy 会把 cv.py
+    已建模的 op（fixpipe/mmadL1/debug/copy…）误报为"未建模"——评审
+    （2026-09-09）发现的计量口径漂移，与绊线同源，此处一并修正。
     """
-    spec = _load_toy_spec()
-    modeled = {op.op for op in spec.ops}  # type: ignore[attr-defined]
+    modeled = _all_modeled_ops()
 
     all_ops: dict[str, int] = {}
     for f in _l1_files():
@@ -149,12 +152,13 @@ def test_modeled_ops_actually_appear_in_some_corpus() -> None:
     """描述里建了模但语料中从不出现的 op = 无法被验证的声明。
 
     这类条目不该被信任升级（无对拍证据），此处提前暴露。
+    口径为描述**并集**且扫描 L0+L1+L2——cv.py 的 op 只出现在 L2 目标 kernel，
+    漏掉 L2 会把已对拍的建模误报为"无法验证"。
     """
-    spec = _load_toy_spec()
-    modeled = {op.op for op in spec.ops}  # type: ignore[attr-defined]
+    modeled = _all_modeled_ops()
 
     seen: set[str] = set()
-    for f in _l0_files() + _l1_files():
+    for f in _l0_files() + _l1_files() + _l2_files():
         seen |= _ops_in(f)
 
     never_seen = sorted(modeled - seen)

@@ -9,3 +9,6 @@ build/
 *.egg-info/
 .venv310/
 .bindings/
+
+# uv 安装的 Python 解释器（.venv310 依赖它；落 /tmp 会断链，须持久化）
+.uvpython/

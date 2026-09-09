@@ -6,6 +6,7 @@
 #
 # 前置（首次）：
 #   bash scripts/setup_bindings.sh     # 拉取 MLIR 绑定到 .bindings/（约 246M）
+#   export UV_PYTHON_INSTALL_DIR="$PWD/.uvpython"   # 解释器须持久化，勿落 /tmp
 #   uv venv .venv310 --python 3.10 && uv pip install -e '.[test]' --python .venv310/bin/python
 set -euo pipefail
 cd "$(dirname "$0")/.."
