@@ -244,6 +244,298 @@
       ],
       "parse_verified": "bishengir-opt strict (no allow-unregistered)",
       "notes": "干净文件，无需夹具剥离"
+    },
+    {
+      "path": "l2/cv-pipelining-preload-full-a5_preload_workspace.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining-preload.mlir#sec1/1",
+      "sha256": "sha256:3f8d6df0615af2ea8136bed4b52df8e90d9c5f5b9dc760db3d89b2d80e2dba40",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "hivm_multi_buffer",
+        "alloc_workspace",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 54 行；剥离注释行 3 行；剥离消费者占位符 2 行（无结果无分配）；a_mem: memref 占位符 → 函数参数（避免引入分配）；k_mem: memref 占位符 → 函数参数（避免引入分配）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining-preload.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec01-test_pipeline.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec1/18",
+      "sha256": "sha256:113b194a50f430c98b5e83d037433a94983a18c88a413ada29f016985c941937",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "scf_if",
+        "hivm_multi_buffer",
+        "alloc_workspace",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 12 行；剥离注释行 5 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；offset: index 占位符 → arith.constant 16（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；cinit: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；cond: i1 占位符 → arith.constant false；gm: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；gm2: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec02-test_nested_cross_workitems.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec2/18",
+      "sha256": "sha256:d485b52dfb9519ef51bd610b63596d172c559996f63b28eda27a6d1552cd37f3",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "hivm_multi_buffer",
+        "alloc_workspace",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 9 行；剥离注释行 9 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；offset: index 占位符 → arith.constant 16（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；gm: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec03-test_pipeline_debug.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec3/18",
+      "sha256": "sha256:c72d4fe78c61400378f96f63e9f354a61c04a258a5ce84056afcd1a88a067bda",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "hivm_multi_buffer",
+        "alloc_workspace",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 9 行；剥离注释行 2 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；offset: index 占位符 → arith.constant 16（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；cinit: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；gm2: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec04-test_lazy_loading.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec4/18",
+      "sha256": "sha256:75d52e65931bbddf0847a4af49626e21f5f63ced3b1dcfe2db4dd2f3b966a192",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 11 行；剥离注释行 15 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；offset: index 占位符 → arith.constant 16（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec05-test_lazy_loading_via_hint.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec5/18",
+      "sha256": "sha256:9fa1dd80d451c59abe971e947356de80fbc0fd8839904f15eb772959cba3a691",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 11 行；剥离注释行 12 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；offset: index 占位符 → arith.constant 16（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec06-test_pipeline_nested_fixpipe.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec6/18",
+      "sha256": "sha256:8e1f1a2641ecd0aa5287e914ce15ef1c551f52e42b4d27e1503165bcd806d35d",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "scf_if",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 6 行；剥离注释行 6 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；offset: index 占位符 → arith.constant 16（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；cond: i1 占位符 → arith.constant false；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec07-test_lazy_loading_hint_on_fixpipe.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec7/18",
+      "sha256": "sha256:6a1688b6944eafa3015baf0a0564136f25a2b934182584e01a27cfcfd67d4b33",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 2 行；剥离注释行 9 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；offset: index 占位符 → arith.constant 16（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec08-test_gm_alias_rejected.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec8/18",
+      "sha256": "sha256:187461d9930cc35d09718e1697aa6c259fa94ee3fe926d44f7cec5065ff0ac66",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 2 行；剥离注释行 8 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec09-test_gm_alias_nested_rejected.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec9/18",
+      "sha256": "sha256:4e15af58aeb9f708da6b880d6b943e585f5a77f023715ec9f18ac2e1d99b39f9",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "scf_if",
+        "address_space"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 2 行；剥离注释行 5 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；cond: i1 占位符 → arith.constant false；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec10-test_pipeline_mmad_acc_chain.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec10/18",
+      "sha256": "sha256:2ffe745cce563f97253983a22cc0ef16f396deb9a1c92e62dec65e08962856e8",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 10 行；剥离注释行 12 行；inA: memref 占位符 → 函数参数（避免引入分配）；inB1: memref 占位符 → 函数参数（避免引入分配）；unrelated_in: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；init_complex: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec11-test_pipeline_nd2nz_cross_workitem.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec11/18",
+      "sha256": "sha256:0e74a117a19e67b9d63d29a7862499ec34411e72d8ae2dcf6125e56d641aba39",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 12 行；剥离注释行 39 行；A: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；v_src: memref 占位符 → 函数参数（避免引入分配）；k_src: memref 占位符 → 函数参数（避免引入分配）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec12-test_pipeline_tensor_load_init.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec12/18",
+      "sha256": "sha256:0d0e8828389e82037c7188d8cc8c3491aa91598554386f67e6315dd4e66b8ba9",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "hivm_multi_buffer",
+        "alloc_workspace",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 10 行；剥离注释行 6 行；a: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；vector_src: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec13-test_lazy_loading_nd2nz_via_hint.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec13/18",
+      "sha256": "sha256:e320e5cf613b1d3a2490d5c5bc12a258c5e2a4d980cbb3570aee0166304098fb",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 15 行；剥离注释行 8 行；A: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；k_src: memref 占位符 → 函数参数（避免引入分配）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；函数签名追加 1 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec14-test_auto_cross_core_lazy_load.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec14/18",
+      "sha256": "sha256:eea40643d4f3a9b67dd2201ae5d6066b7a3aec43a1dac98ca111085844d87e69",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 11 行；剥离注释行 17 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；offset: index 占位符 → arith.constant 16（值不影响占用分析）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；函数签名追加 2 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec15-test_extracted_load_or_store_vec_seed.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec15/18",
+      "sha256": "sha256:bdc24014e103a70813bb37307264c6f7ddba355aa792e773da82090e996f697a",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 14 行；剥离注释行 28 行；A: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；off: index 占位符 → arith.constant 16（值不影响占用分析）",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec16-test_merger_absorption.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec16/18",
+      "sha256": "sha256:4102bf3a6d73561d2631c1d894fa25f24c1c4c09b9e13b076980883b5ab05e0d",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "scf_if",
+        "address_space",
+        "dynamic_shape"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 13 行；剥离注释行 21 行；input1: memref 占位符 → 函数参数（避免引入分配）；input2: memref 占位符 → 函数参数（避免引入分配）；bound: i32 占位符 → arith.constant 4（值不影响占用分析）；vinit: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）；cond: i1 占位符 → arith.constant false；gm_dst: memref 占位符 → 函数参数（避免引入分配）；函数签名追加 3 个提升参数",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec17-test_skip_unobserved_counter_clone.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec17/18",
+      "sha256": "sha256:204305352850d988c79f535e9bf578d37966ba3dc8f4d0c383dc45d05f2525ad",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "scf_if",
+        "address_space"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 17 行；剥离注释行 4 行；剥离消费者占位符 1 行（无结果无分配）；input: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
+    },
+    {
+      "path": "l2/cv-pipelining-sec18-test_pipeline_nested_static_counter.mlir",
+      "layer": "l2",
+      "origin": "harvested:bishengir/test/Dialect/HIVM/cv-pipelining.mlir#sec18/18",
+      "sha256": "sha256:f16fe691b62b76afc109429a710be86732bba4a206067608c109a7eea01ce1fa",
+      "source_commit": "80db8e8c62a6b6f944bdb201b5412fe9790e01d2",
+      "features": [
+        "scf_for",
+        "address_space"
+      ],
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)",
+      "extraction": "剥离 lit 指令行 13 行；input: tensor 占位符 → tensor.empty（纯 SSA 值，无 buffer）",
+      "source_path": "bishengir/test/Dialect/HIVM/cv-pipelining.mlir"
     }
   ]
 }

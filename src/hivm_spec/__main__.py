@@ -30,7 +30,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_gen = sub.add_parser("gen", help="描述 → 配置文档（T0.5）")
-    p_gen.add_argument("description", help="描述模块路径（Python 模块或文件）")
+    p_gen.add_argument(
+        "description",
+        nargs="+",
+        help="描述模块路径（可多份，语义取并集；重名冲突报错）",
+    )
     p_gen.add_argument("-o", "--output", default="config.json", help="配置文档输出路径")
     p_gen.add_argument(
         "--timestamp",
@@ -45,6 +49,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tool.add_argument("name", help="工具名，如 ub_occupancy / timeline / equivalence")
     p_tool.add_argument("-c", "--config", default="config.json", help="配置文档（由 gen 产出）")
     p_tool.add_argument("--json", metavar="PATH", help="把完整结论写为 JSON")
+    p_tool.add_argument("--no-chart", action="store_true", help="不在终端渲染文本占用图（T1.5）")
     # D12：输入恒为单份 IR；仅等价验证取两份（待验 + 锚点）。不接受 pass 序列——
     # 跨 pass 定位由 agent 对每份 dump 分别调用来编排（见 AGENTS.md §6）。
     p_tool.add_argument(
@@ -101,14 +106,24 @@ def _cmd_check(paths: list[str]) -> int:
     return EXIT_FAIL if failed else EXIT_OK
 
 
-def _cmd_gen(path: str, output: str, timestamp: str | None) -> int:
+def _cmd_gen(paths: list[str], output: str, timestamp: str | None) -> int:
     from hivm_spec.generate import generate, validate_config, write_outputs
     from hivm_spec.static_check import check_spec, format_diagnostics, has_errors
 
-    spec, err = _load_spec(path)
+    spec, err = _load_spec(paths[0])
     if spec is None:
         print(err, file=sys.stderr)
         return EXIT_FAIL
+    for extra in paths[1:]:
+        other, err = _load_spec(extra)
+        if other is None:
+            print(err, file=sys.stderr)
+            return EXIT_FAIL
+        try:
+            spec.merge(other)
+        except Exception as exc:  # SpecError
+            print(f"合并描述失败：{exc}", file=sys.stderr)
+            return EXIT_FAIL
 
     # 静态检查是生成的前置门（T0.2）：宁可不产出工具，
     # 也不产出一个语义有洞的工具（FR6）。
@@ -152,10 +167,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "gen":
         return _cmd_gen(args.description, args.output, args.timestamp)
 
-    return _cmd_tool(args.name, args.config, args.inputs, args.json)
+    return _cmd_tool(args.name, args.config, args.inputs, args.json, not args.no_chart)
 
 
-def _cmd_tool(name: str, config_path: str, inputs: list[str], json_out: str | None) -> int:
+def _cmd_tool(
+    name: str,
+    config_path: str,
+    inputs: list[str],
+    json_out: str | None,
+    chart: bool = True,
+) -> int:
     from hivm_spec.assemble import load_config, run_tool
     from hivm_spec.bindings import BindingsError
     from hivm_spec.ir_engine import lower_module_text
@@ -211,6 +232,12 @@ def _cmd_tool(name: str, config_path: str, inputs: list[str], json_out: str | No
 
     result = run_tool(name, config, lowered.module, spec_hash)
     print(result.render())
+    if chart:
+        from hivm_spec.render import render_occupancy_chart
+
+        chart_text = render_occupancy_chart(result.details)
+        if chart_text:
+            print(chart_text)
 
     if json_out:
         Path(json_out).write_bytes(result.to_json_bytes())

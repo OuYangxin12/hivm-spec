@@ -53,14 +53,14 @@
 | 任务 | 内容 | 验收 |
 |---|---|---|
 | T1.0 ✅ | **目标 kernel op 清点与 gap 分析**：cv-pipelining.mlir 的 hivm op 集合 vs 账本 → 建模工作清单（提前暴露 M2 的建模量） | 已完成，见 `docs/tasks/M1.md` §1：待建模 **9 个 op**，仅 `mmadL1` 需逃生舱 |
-| T1.1 | IR 接口引擎：解析 kernel、遍历函数体，**产出 VIR**（T0.0 契约；alloc/效应节点 + scf 结构标注）；不认识的结构落入 VIR `coverage` 并上报 `COVERAGE_GAP`；含 bindings bootstrap 模块（框架 §6 强制条款）+ `requires_bindings` 回归 | 两个目标 kernel VIR 正确；bootstrap 回归可跑 |
-| T1.2 | 生存期/峰值引擎：alloc→last use 区间（顺序语义）；per-space 曲线与峰值 | 与手算一致（小型样例） |
-| T1.3 | 尺寸策略：静态 shape 直读；动态维度经测试配置参数化；编译器尺寸标注存在则优先并记录来源 | 动态样例可用 |
-| T1.4 | 容量判定：对照 arch 段容量（D4/OD7 参数化）；OVERFLOW/OK + 贡献者排序（alloc 名/尺寸/活跃区间） | 注入缺陷（扩 alloc）被检出（AC1 溢出维） |
-| T1.5 | 渲染器：JSON 曲线 + SVG/文本占用图 | 人/agent 双消费可用 |
-| T1.6 | 结论框架落地：verdict 封闭枚举 + diagnostics + spec_hash + trust 降级标注 | §7.3 契约字段齐备 |
-| T1.7 | 双 kernel 验收：VecAdd bring-up + cv-pipelining 目标场景 | 两者出图，预算内（**≤10s**，D10/AC2）；实测值回填 D10 表 |
-| T1.8 | AGENTS.md spec-gate 首版：改 HIVM pass → 必跑对应 spec 工具（D4/OD5） | 指令入库 |
+| T1.1 ✅ | IR 接口引擎：解析 kernel、遍历函数体，**产出 VIR**（T0.0 契约；alloc/效应节点 + scf 结构标注）；不认识的结构落入 VIR `coverage` 并上报 `COVERAGE_GAP`；含 bindings bootstrap 模块（框架 §6 强制条款）+ `requires_bindings` 回归 | L2 全部 19 份严格解析并降级成功；bootstrap 回归可跑（PR #6/#8） |
+| T1.2 ✅ | 生存期/峰值引擎：alloc→last use 区间（顺序语义）；per-space 曲线与峰值 | 区间语义三性质已验证（不重叠不累加/重叠必累加/跨循环计入） |
+| T1.3 ✅ | 尺寸策略：静态 shape 直读；动态维度降级 UNKNOWN_SIZE；编译器标注优先并记录来源（`hivm.multi_buffer` 实测生效） | 动态样例可用；multi_buffer 在 preload kernel 命中 |
+| T1.4 ✅ | 容量判定：对照 arch 段容量（D4/OD7 参数化）；OVERFLOW/OK + 贡献者排序（alloc 名/尺寸/活跃区间）；空洞 OK 防线（L1 实测补强） | 注入缺陷被检出（AC1 溢出维）✅ |
+| T1.5 ✅ | 渲染器：JSON 曲线 + 文本占用图（sparkline/比例条/贡献者；SVG 缓行） | 人/agent 双消费可用 |
+| T1.6 ✅ | 结论框架落地：verdict 封闭枚举 + diagnostics + spec_hash（由配置文档字节串重算）+ trust 降级标注；缺口/问题退出码分离 | §7.3 契约字段齐备 |
+| T1.7 ✅ | 双 kernel 验收：L0 bring-up + cv-pipelining 目标场景（18 分节 + preload） | 19 份全部出图，单 kernel 最大 **0.20s**（余量 51×）；实测值已回填 D10 表 |
+| T1.8 ✅ | AGENTS.md spec-gate 首版（§6.5）：按改动性质选最小执行集 + 基线对照 | 指令入库 |
 
 ## 4. M2：时序图与同步语义
 
