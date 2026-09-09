@@ -11,9 +11,10 @@ JSON 是 agent 的消费通道；本模块服务另一侧——终端里的人�
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-__all__ = ["render_occupancy_chart"]
+__all__ = ["chrome_trace_json", "render_occupancy_chart", "render_timeline_chart"]
 
 _WIDTH = 52
 #: 8 级 sparkline 块字符（U+2581..U+2588），空格表示零值
@@ -102,3 +103,136 @@ def render_occupancy_chart(details: dict[str, Any]) -> str:
         if unsized:
             lines.append(f"    ⚠ {unsized} 个 buffer 尺寸未知，未计入上述峰值（峰值为下界）")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 时序图渲染（T2.4）：文本甘特 + Chrome Trace Event Format
+# ---------------------------------------------------------------------------
+
+#: 甘特图列宽（≤80 列约束下留出行头空间）
+_GANTT_WIDTH = 56
+
+#: 步骤类别 → 甘特字符。受阻的 wait 用 `×`——坏消息在视图层同样不可隐藏。
+_KIND_MARK = {
+    "op": "·",
+    "set_flag": "▲",
+    "sync_block_set": "▲",
+    "wait_flag": "▽",
+    "sync_block_wait": "▽",
+    "pipe_barrier": "≡",
+}
+_BLOCKED_MARK = "×"
+
+
+def render_timeline_chart(details: dict[str, Any]) -> str:
+    """从 ToolResult.details 渲染文本甘特图（主策略 = sequential）。
+
+    行 = 泳道（pipe，按 vm.pipes 声明序，未声明的排后），列 = 执行步
+    （事件步单位，超宽按桶收拢——桶内**受阻 wait 优先保留**，坏消息不丢）。
+    仅依赖 details 已序列化字段，与结论契约解耦；确定性输出（FR8）。
+    """
+    timelines: dict[str, Any] = details.get("timelines", {})
+    if not timelines:
+        return ""
+    primary = timelines.get("sequential") or next(iter(timelines.values()))
+    steps: list[dict[str, Any]] = primary.get("steps", [])
+    if not steps:
+        return ""
+
+    lane_order: list[str] = list(details.get("pipe_order", []))
+    for st in steps:
+        if st["lane"] not in lane_order:
+            lane_order.append(st["lane"])
+
+    blocked_seqs = {int(s) for s in primary.get("blocked", [])}
+    total = max(int(st["pos"]) for st in steps) + 1
+
+    def _rank(st: dict[str, Any]) -> int:
+        """桶内代表步骤的优先级：受阻 wait > 同步 > barrier > 普通 op。"""
+        if int(st["seq"]) in blocked_seqs:
+            return 3
+        if st["kind"] in ("set_flag", "sync_block_set", "wait_flag", "sync_block_wait"):
+            return 2
+        if st["kind"] == "pipe_barrier":
+            return 1
+        return 0
+
+    # 列 = 执行位次（与 Chrome Trace 的 ts 同口径）；每列每泳道取一个代表步骤，
+    # 桶内受阻 wait 优先保留（坏消息不丢）
+    grid: dict[int, dict[str, dict[str, Any]]] = {}
+    if total <= _GANTT_WIDTH:
+        for st in steps:
+            grid.setdefault(int(st["pos"]), {})[st["lane"]] = st
+    else:
+        for st in steps:
+            col = int(st["pos"]) * _GANTT_WIDTH // total
+            lane_cells = grid.setdefault(col, {})
+            cur = lane_cells.get(st["lane"])
+            if cur is None or _rank(st) > _rank(cur):
+                lane_cells[st["lane"]] = st
+
+    lines: list[str] = ["", f"时序图（{primary.get('strategy', 'sequential')}，事件步）："]
+    width = _GANTT_WIDTH if total > _GANTT_WIDTH else total
+    for lane in lane_order:
+        cells = ""
+        for col in range(width):
+            cell = grid.get(col, {}).get(lane)
+            if cell is None:
+                cells += " "
+            elif int(cell["seq"]) in blocked_seqs:
+                cells += _BLOCKED_MARK
+            else:
+                cells += _KIND_MARK.get(cell["kind"], "·")
+        lines.append(f"  {lane:<12s} {cells}")
+    lines.append("  图例：· op　▲ set　▽ wait　≡ barrier　× 受阻 wait")
+    for note in details.get("truncation_notes", [])[:2]:
+        lines.append(f"  ⚠ {note}")
+    deadlocks = details.get("deadlocks", [])
+    if deadlocks:
+        d0 = deadlocks[0]
+        lines.append(f"  ✗ 死锁：{d0['message']} @ {d0['loc']}")
+    return "\n".join(lines)
+
+
+def chrome_trace_json(details: dict[str, Any], *, max_events: int = 20000) -> str:
+    """把各策略时间线转为 Chrome Trace Event Format（perfetto 可导入）。
+
+    时间轴用"事件步"而非时钟（M2 无耗时模型）：ts = 执行位次，dur = 1。
+    pid = 策略名，tid = 泳道序号。确定性序列化（FR8）。
+    """
+    timelines: dict[str, Any] = details.get("timelines", {})
+    pipe_order: list[str] = list(details.get("pipe_order", []))
+    for tl in timelines.values():
+        for st in tl.get("steps", []):
+            if st["lane"] not in pipe_order:
+                pipe_order.append(st["lane"])
+    tid_of = {lane: i for i, lane in enumerate(pipe_order)}
+
+    events: list[dict[str, Any]] = []
+    for name in sorted(timelines):
+        tl = timelines[name]
+        blocked = {int(s) for s in tl.get("blocked", [])}
+        events.append({"ph": "M", "name": "process_name", "pid": name, "args": {"name": name}})
+        for st in tl.get("steps", []):
+            if len(events) >= max_events:
+                break
+            ev = st.get("event")
+            events.append(
+                {
+                    "ph": "X",
+                    "name": st["op"],
+                    "cat": st["kind"],
+                    "pid": name,
+                    "tid": tid_of.get(st["lane"], 0),
+                    "ts": int(st["pos"]),
+                    "dur": 1,
+                    "args": {
+                        "seq": st["seq"],
+                        "iter": st.get("iter", ""),
+                        "event": ev,
+                        "blocked": int(st["seq"]) in blocked,
+                        "loc": st.get("loc", ""),
+                    },
+                }
+            )
+    return json.dumps({"traceEvents": events, "displayTimeUnit": "ns"}, ensure_ascii=False)
