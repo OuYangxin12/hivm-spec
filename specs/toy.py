@@ -127,5 +127,37 @@ spec.op(
 
 # --- checks 段：要生成的工具 ----------------------------------------------
 
+# unroll_bound=16：未知 trip 循环的缺省展开界（M2）。静态 trip 全量展开不受此限；
+# 界只影响探索口径，结论恒携带"展开界"限定语（T2.5）。
 spec.check("ub_occupancy", spaces=["ub", "cbuf"])
-spec.check("timeline", scheduling="conservative", strategies=4, unroll_bound=3)
+spec.check("timeline", scheduling="conservative", strategies=4, unroll_bound=16)
+
+# --- 语义假设段：未经对拍的口径必须登记（D9 前置，M2 审查发现 3） ----------
+
+# 此前这些假设只写在 docs/tasks/M2.md §9 的散文里——机器读不到、结论里也不
+# 声明，等于把全模型最敏感的语义决策留在账本之外。登记后：进配置文档与信任
+# 账本（frozen_by_assumption 冻结 trust 升级），直到与主仓 C++ 链对拍销案。
+spec.assume(
+    "timeline/flag-initial-state",
+    "flag 初态 = 已装载（INITIAL_ARM=1，set 视为 re-arm）",
+    authority="upstream-cpp",
+    rationale=(
+        "M1 卡『首个 re-arm set』措辞隐含 flag 出厂即 armed；且初态已装载使等待"
+        "更易放行，方向上压制假阳性死锁（NFR2）。同泳道 1:1 配平 + 初始装载 = "
+        "自续握手（健康），2:1 起才饿死。"
+    ),
+    # 若真实初态为未装载（0），wait-before-first-set 的真实死锁会被放行
+    risk_direction="false-negative",
+    resolve_by="M3",
+)
+spec.assume(
+    "timeline/pair-direction",
+    "set/wait 配对只按 event id，不依赖 set_pipe/wait_pipe 的方向约定",
+    authority="upstream-cpp",
+    rationale=(
+        "IR 括号中 set_pipe/wait_pipe 的方向语义尚未与主仓 C++ 链对拍定稿，"
+        "判定刻意不依赖方向（方向只影响展示与泳道归属）。"
+    ),
+    risk_direction="both",
+    resolve_by="M3",
+)

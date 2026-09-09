@@ -32,6 +32,7 @@ __all__ = [
     "Out",
     "ParamKind",
     "PipeDecl",
+    "SemanticAssumption",
     "SpaceDecl",
     "Spec",
     "SpecError",
@@ -285,6 +286,33 @@ KNOWN_CHECKS = frozenset({"ub_occupancy", "timeline", "equivalence"})
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class SemanticAssumption:
+    """未经对拍确认的语义假设（D9 前置登记）。
+
+    **为何需要它**：D9 要求"发现漂移一律先登记 drift ledger"，但漂移的**前身**
+    是"我按某个方向猜了语义、还没和权威链对拍"。这类假设此前只能写在任务卡
+    散文里（M2 的 flag 初态假设即如此），机器读不到、也无法在结论中声明——
+    等于把最敏感的语义决策留在了账本之外（M2 审查发现 3）。
+
+    登记后：进入账本 `assumptions` 段、随结论输出 provenance，并在对拍完成前
+    冻结相关 op/引擎口径的 trust 升级（与 DriftEntry 同一原则）。
+    """
+
+    #: 假设的主体：op 名，或引擎口径（如 "timeline/flag-initial-state"）
+    subject: str
+    #: 假设内容（当前实现按什么语义执行）
+    assumed: str
+    #: 判定该假设真伪的权威（"upstream-cpp" | "hardware-golden" | "doc"）
+    authority: str = "upstream-cpp"
+    #: 选择该方向的理由（尤其：为何这个方向更保守）
+    rationale: str = ""
+    #: 若假设为假，会朝哪个方向错（"false-positive" | "false-negative" | "both"）
+    risk_direction: str = "both"
+    #: 计划的对拍时点（里程碑号，如 "M3"）
+    resolve_by: str = ""
+
+
 class Spec:
     """一份 HIVM 语义描述（§4.2 的 ops / vm / checks 三段）。"""
 
@@ -298,6 +326,7 @@ class Spec:
         self._pipes: list[PipeDecl] = []
         self._events: list[EventDecl] = []
         self._checks: list[CheckSpec] = []
+        self._assumptions: list[SemanticAssumption] = []
 
     # -- ops 段 -----------------------------------------------------------
 
@@ -403,6 +432,41 @@ class Spec:
             raise SpecError(f"check 重复声明：{name}")
         self._checks.append(CheckSpec(name=name, options=dict(options)))
 
+    def assume(
+        self,
+        subject: str,
+        assumed: str,
+        *,
+        authority: str = "upstream-cpp",
+        rationale: str = "",
+        risk_direction: str = "both",
+        resolve_by: str = "",
+    ) -> None:
+        """登记一条未经对拍的语义假设（D9 前置，见 `SemanticAssumption`）。
+
+        重复登记同一 subject 视为描述错误——一个主体只应有一个当前假设；
+        假设变更应改写原条目，以免账本里堆叠互相矛盾的历史猜测。
+        """
+        if not subject or not assumed:
+            raise SpecError("语义假设必须同时给出 subject 与 assumed")
+        if any(a.subject == subject for a in self._assumptions):
+            raise SpecError(f"语义假设重复登记：{subject}")
+        if risk_direction not in ("false-positive", "false-negative", "both"):
+            raise SpecError(
+                f"risk_direction 取值非法：{risk_direction}"
+                "（须为 false-positive / false-negative / both）"
+            )
+        self._assumptions.append(
+            SemanticAssumption(
+                subject=subject,
+                assumed=assumed,
+                authority=authority,
+                rationale=rationale,
+                risk_direction=risk_direction,
+                resolve_by=resolve_by,
+            )
+        )
+
     # -- 只读访问 ---------------------------------------------------------
 
     @property
@@ -420,6 +484,10 @@ class Spec:
     @property
     def events(self) -> tuple[EventDecl, ...]:
         return tuple(sorted(self._events, key=lambda e: e.name))
+
+    @property
+    def assumptions(self) -> tuple[SemanticAssumption, ...]:
+        return tuple(sorted(self._assumptions, key=lambda a: a.subject))
 
     @property
     def checks(self) -> tuple[CheckSpec, ...]:
@@ -480,6 +548,19 @@ class Spec:
                 "events": [e.name for e in self.events],
             },
             "checks": [{"name": c.name, "options": _canonical(c.options)} for c in self.checks],
+            #: 未经对拍的语义假设（D9 前置）。进 spec_hash：假设变更即语义口径
+            #: 变更，必须产生新 hash，否则历史结论无法与其假设前提对应。
+            "assumptions": [
+                {
+                    "subject": a.subject,
+                    "assumed": a.assumed,
+                    "authority": a.authority,
+                    "rationale": a.rationale,
+                    "risk_direction": a.risk_direction,
+                    "resolve_by": a.resolve_by,
+                }
+                for a in self.assumptions
+            ],
         }
 
     def canonical_bytes(self) -> bytes:

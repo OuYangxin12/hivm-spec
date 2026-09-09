@@ -343,3 +343,56 @@ def test_normalize_marks_escape_hatch_entries() -> None:
     assert entry["escape_hatch"] is True
     assert entry["trust"] == "provisional"
     assert entry["value"]["reason"] == "布局代数"
+
+
+# ---------------------------------------------------------------------------
+# 语义假设登记（D9 前置，M2 审查发现 3）
+# ---------------------------------------------------------------------------
+
+
+def test_assumption_is_registered_and_hashed() -> None:
+    """未对拍的语义假设须落配置文档，且进 spec_hash（假设变更 = 语义变更）。"""
+    s = _base_spec()
+    s.assume(
+        "timeline/flag-initial-state",
+        "flag 初态 = 已装载",
+        rationale="压制假阳性",
+        risk_direction="false-negative",
+        resolve_by="M3",
+    )
+    doc = s.normalize()
+    assert doc["assumptions"][0]["subject"] == "timeline/flag-initial-state"
+    assert doc["assumptions"][0]["risk_direction"] == "false-negative"
+
+    bare = _base_spec()
+    assert bare.spec_hash() != s.spec_hash(), "假设登记必须改变 spec_hash"
+
+
+def test_assumption_rejects_duplicate_and_bad_risk_direction() -> None:
+    """一个主体只能有一个当前假设；风险方向取值受约束（防账本堆矛盾猜测）。"""
+    s = _base_spec()
+    s.assume("timeline/x", "假设 A")
+    with pytest.raises(SpecError, match="重复登记"):
+        s.assume("timeline/x", "假设 B")
+    with pytest.raises(SpecError, match="risk_direction"):
+        s.assume("timeline/y", "假设 C", risk_direction="whatever")
+
+
+def test_unresolved_assumption_freezes_trust_upgrade() -> None:
+    """未销案的假设冻结 trust 升级——语义没对齐就升信任等于把猜测当结论。"""
+    from hivm_spec.assemble import _trust_of
+    from hivm_spec.generate import generate
+
+    s = _base_spec()
+    s.op(
+        "hivm.hir.vadd",
+        params={"out": Out()},
+        effects=(wr("out"),),
+        trust=Trust.CROSS_VALIDATED,
+    )
+    s.assume("timeline/flag-initial-state", "flag 初态 = 已装载", resolve_by="M3")
+    res = generate(s, timestamp="2026-01-01T00:00:00+00:00")
+    led = res.ledger.to_json()
+    assert led["frozen_by_assumption"] == ["timeline/flag-initial-state"]
+    # 结论侧同样封顶 provisional
+    assert _trust_of(res.config) == "provisional"

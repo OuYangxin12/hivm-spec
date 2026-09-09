@@ -62,21 +62,22 @@
 | T1.7 ✅ | 双 kernel 验收：L0 bring-up + cv-pipelining 目标场景（18 分节 + preload） | 19 份全部出图，单 kernel 最大 **0.20s**（余量 51×）；实测值已回填 D10 表 |
 | T1.8 ✅ | AGENTS.md spec-gate 首版（§6.5）：按改动性质选最小执行集 + 基线对照 | 指令入库 |
 
-## 4. M2：时序图与同步语义
+## 4. M2：时序图与同步语义 ✅（2026-09-09 完成，实测见 `docs/tasks/M2.md` §8）
 
-| 任务 | 内容 | 验收 |
-|---|---|---|
-| T2.1 | pipe/event 状态机（消费 vm 段 + **VIR**，不另建遍历核 D6）：op→pipe 归属、set/wait/pipe_barrier/sync_block 语义执行 | 单核顺序策略下时间线正确；无绕过 VIR 的 MLIR 访问 |
-| T2.2 | 交错策略集 + 有界迭代展开参数（顺序/轮转/pipe 优先/K 随机种子） | 策略可配置、可复现（种子化） |
-| T2.3 | wait-for 图确定性层：结构性死锁（不可满足 wait/环）判定，确定性结论 | 注入无配对 wait 被确定性判定 |
-| T2.4 | 时序渲染：iteration×pipe 甘特 + wait/set 依赖标注 + Chrome Trace Event Format 输出（perfetto 可视化） | cv kernel 图可读；trace 可导入 perfetto |
-| T2.5 | 报告口径：探索层结论统一"在{策略集}×{展开界}内未发现"（D4/OD2） | 结论字段落 schema |
-| T2.6 | cv kernel 验收：注入配对缺陷（跨迭代 wait/set 错位）在图或结论中暴露 | AC1 死锁维（观测层） |
+| 任务 | 内容 | 验收 | 状态 |
+|---|---|---|---|
+| T2.1 | pipe/event 状态机（消费 vm 段 + **VIR**，不另建遍历核 D6）：op→pipe 归属、set/wait/pipe_barrier/sync_block 语义执行 | 单核顺序策略下时间线正确；无绕过 VIR 的 MLIR 访问 | ✅ |
+| T2.2 | 交错策略集 + 有界迭代展开参数（顺序/轮转/pipe 优先/K 随机种子） | 策略可配置、可复现（种子化） | ✅ |
+| T2.3 | wait-for 图确定性层：结构性死锁（不可满足 wait/环）判定，确定性结论 | 注入无配对 wait 被确定性判定 | ✅ |
+| T2.4 | 时序渲染：iteration×pipe 甘特 + wait/set 依赖标注 + Chrome Trace Event Format 输出（perfetto 可视化） | cv kernel 图可读；trace 可导入 perfetto | ✅ |
+| T2.5 | 报告口径：探索层结论统一"在{策略集}×{展开界}内未发现"（D4/OD2） | 结论字段落 schema | ✅ |
+| T2.6 | cv kernel 验收：注入配对缺陷（跨迭代 wait/set 错位）在图或结论中暴露 | AC1 死锁维（观测层） | ✅ |
 
 ## 5. M3：等价验证（具体执行档）
 
 | 任务 | 内容 | 验收 |
 |---|---|---|
+| **T3.0** | **对拍主仓 C++ 链，销 M2 遗留语义假设**（`timeline/flag-initial-state`、`timeline/pair-direction`；由 M2 复审产生，见 `docs/tasks/M2.md` §10.4） | 假设移出 `frozen_by_assumption` 或转 drift 条目；若 flag 初态实为未装载，`INITIAL_ARM` 修订 + L0 注入用例期望重跑 |
 | T3.1 | 双模值具体模式引擎 + **符号句柄 API 定稿**（受限子集；D4/OD1 方案 A） | 同一 op 函数双模式输出一致（具体小例） |
 | T3.2 | 控制流解释：**复用 VIR 的 `VRegion`/`VLoop` 与 T0.0 值槽位**（D6/D8，扩展而非重写）；scf.for/if/while + 社区方言语义内置（arith/memref/tensor 子集按需扩展） | 目标 kernel 可解释执行；遍历核仍唯一 |
 | T3.3 | 数值基础设施：ml_dtypes（f16/bf16）；round_mode 显式表达 | 定点样例对拍一致 |
@@ -96,7 +97,7 @@
 
 ## 7. 横切事项
 
-- **CI 接入**：✅ 已落地（`.github/workflows/ci.yml` 四 job：lint+types / core 矩阵 3.10+3.12 / schema golden / spec-gate）；M1 末评估 lit 接入 `check-bishengir`；
+- **CI 接入**：✅ 已落地（`.github/workflows/ci.yml` 四 job：lint+types / core 矩阵 3.10+3.12 / schema golden / spec-gate）；M1 末 lit 接入评估已完成：**不接入** check-bishengir（纯下游外部工具定位，主仓 lit 负责结构回归；边界口径已落 requirements Q7）；
 - **描述 PR 模板**：trust 升级 checklist（三类用例证据，D4/OD4+OD11）；**已由 spec-gate R2 机械强制**；
 - **对拍用例库**：`specs/cases/`，与描述同 PR 演进（OD11）；**语料按 D13 分层引入**（L0 手写 → L1 干净 UT → L2 按需剥离 → L3 e2e dump），入库并以 manifest 锚定来源 commit（框架 §14）；
 - **性能复核点**：M3.7 是 D1 的唯一预设复查点；per-tool 预算见 D10；
@@ -105,7 +106,15 @@
 ## 8. 工程约定
 
 - **PR 流程**：main 分支禁直推（分支保护已启用），所有改动走 feature 分支 → PR → 合入；单人阶段 PR 免**人工**审批直接 merge，多协作者后再收紧审批。
-- **机器门禁不可绕过（D5）**：单人阶段免人工审批，但 CI 四门禁必须全绿方可合入——这是 FR6 防自欺的实际载体，不得以"单人阶段"为由跳过或放松。放松门禁的改动本身受 CODEOWNERS 看护。
+- **本地合入例外（M2 审查发现 2 后补）**：允许未推送状态下本地 merge 到 main（离线/连续迭代场景），但**远端分支保护与 CI 在这条路径上结构性失效**——feature 分支没上过远端，CI 不可能跑。因此本地合入**必须**先跑：
+
+  ```bash
+  python scripts/merge_gate.py          # 全绿方可 merge；证据写入 build/merge-gate.json
+  python scripts/merge_gate.py --check  # 校验证据覆盖当前 HEAD
+  ```
+
+  该脚本跑 CI 门禁的本地等价物（spec-gate 的 base 取 merge-base，避免漏检未推送提交），并把结果落成**可审计证据**（HEAD、时间、逐门禁结论、工作区是否干净）。工作区不干净即拒绝——否则"绿"不对应任何一个提交。推送后 CI 仍是权威；本地证据解决的是"本地合入零机器证据"这个具体缺口，**不是** CI 的替代品。
+- **机器门禁不可绕过（D5）**：单人阶段免人工审批，但 CI 四门禁必须全绿方可合入——这是 FR6 防自欺的实际载体，不得以"单人阶段"为由跳过或放松。放松门禁的改动本身受 CODEOWNERS 看护。**本地合入路径同受此条约束**，落点即上条的 `merge_gate.py`。
 - **本地预检命令**（与 CI 等价，agent 提交前须跑）：
 
   ```bash
