@@ -252,23 +252,29 @@ def test_cli_reports_broken_description_readably(
     assert "RuntimeError" in capsys.readouterr().err
 
 
-def test_cli_unimplemented_tools_still_report_pending(
+def test_cli_unknown_tool_reports_pending_not_fake_success(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """未实现的工具必须显式 PENDING，不得假成功（FR7）。
+    """契约已定义但实现未落地的工具必须显式 PENDING，不得假成功（FR7）。
 
-    M2 起 timeline 已实现，未实现名单只剩 equivalence（M3）。
+    T3.5 起 equivalence 已实现，_IMPLEMENTED_TOOLS 三个工具齐备，故这里用一个
+    虚构工具名来守住 PENDING 通路本身——它服务于将来新增的工具。
     """
-    assert main(["tool", "equivalence", "x.mlir"]) == EXIT_PENDING
+    assert main(["tool", "not_a_tool_yet", "x.mlir"]) == EXIT_PENDING
     assert "PENDING" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("tool", ["timeline", "ub_occupancy", "equivalence"])
 def test_cli_implemented_tools_do_not_report_pending(
+    tool: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """已实现的工具不得停留在 PENDING（M2 回归守卫：timeline 必须真跑）。"""
+    """已实现的工具不得停留在 PENDING。
+
+    equivalence 于 T3.5 加入本清单——这是防它退回 PENDING 的回归守卫。
+    """
     # x.mlir 不存在 → 走"IR 文件不存在"路径（exit 1），但绝不能是 PENDING(3)
-    assert main(["tool", "timeline", "x.mlir"]) == EXIT_FAIL
+    assert main(["tool", tool, "x.mlir"]) == EXIT_FAIL
     assert "PENDING" not in capsys.readouterr().err
 
 

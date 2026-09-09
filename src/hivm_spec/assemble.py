@@ -561,6 +561,134 @@ def _timeline_details(expansion: Any, sim: Any) -> dict[str, Any]:
     }
 
 
+def run_equivalence(
+    config: dict[str, Any],
+    module: VModule,
+    spec_hash: str = "",
+    *,
+    anchor: VModule | None = None,
+    bound: int | None = None,
+) -> ToolResult:
+    """等价验证工具：具体执行差分 + 首发散点定位（T3.5/T3.6）。
+
+    `anchor is None` 时**不自比**——报 COVERAGE_GAP。拿同一份 IR 自比恒等于
+    "通过"，却什么都没验证，而报告上的 OK 与真验证过的 OK 长得一模一样
+    （M3 卡 §4 要点 2：最典型的自欺形态）。
+    """
+    from hivm_spec import equivalence as eq
+    from hivm_spec.inputs import InputStrategy, specs_from_module
+    from hivm_spec.interpret import interpret
+    from hivm_spec.values import concrete
+
+    trust = _trust_of(config)
+    check_cfg = next((c for c in config.get("checks", []) if c["name"] == "equivalence"), None)
+    if check_cfg is None:
+        return ToolResult(
+            tool="equivalence",
+            verdict=Verdict.UNTRUSTED_DESCRIPTION,
+            spec_hash=spec_hash,
+            engine_version=eq.EQUIVALENCE_ENGINE_VERSION,
+            trust=trust,
+            ir_fingerprint=module.fingerprint(),
+            diagnostics=[
+                Finding(
+                    severity="error",
+                    message="描述未声明 equivalence check——无法确定容差口径（rtol/atol）",
+                    rule="assemble/missing-check",
+                )
+            ],
+        )
+
+    tol = eq.tolerance_from_config(config)
+    if anchor is None:
+        return ToolResult(
+            tool="equivalence",
+            verdict=Verdict.COVERAGE_GAP,
+            spec_hash=spec_hash,
+            engine_version=eq.EQUIVALENCE_ENGINE_VERSION,
+            trust=trust,
+            ir_fingerprint=module.fingerprint(),
+            diagnostics=[
+                Finding(
+                    severity="error",
+                    message=(
+                        "未提供对拍锚点（--anchor）：等价验证需要一份参照 IR。"
+                        "本工具不做自比——同一份 IR 自比恒为 OK，却什么都没验证"
+                    ),
+                    rule="equivalence/no-anchor",
+                )
+            ],
+            details={"tolerance": tol.as_dict()},
+        )
+
+    # 两侧必须拿到**同一组**输入，否则"结果不同"可能只是输入不同。
+    # 输入规格取自待验侧；锚点侧缺哪个输入就按缺口处理（不另生成）。
+    specs, problems = specs_from_module(module)
+    strategy = InputStrategy()
+    raw = strategy.generate_all(specs)
+    dtype_of_name = {s.name: s.dtype for s in specs}
+    inputs = {k: concrete(v, dtype_of_name[k]) for k, v in raw.items()}
+
+    diagnostics: list[Finding] = [
+        Finding(
+            severity="warning",
+            message=f"输入无法推导：{why}",
+            rule="equivalence/undeducible-input",
+        )
+        for why in problems
+    ]
+
+    left = interpret(module, config, inputs, bound=bound)
+    # 锚点侧用**同一批输入对象**：按名字取，缺失的不补
+    anchor_specs, _ = specs_from_module(anchor)
+    anchor_inputs = {s.name: inputs[s.name] for s in anchor_specs if s.name in inputs}
+    right = interpret(anchor, config, anchor_inputs, bound=bound)
+
+    diff = eq.compare(left, right, tol)
+
+    for note in diff.notes:
+        diagnostics.append(Finding(severity="warning", message=note, rule="equivalence/note"))
+    if diff.first is not None:
+        diagnostics.append(
+            Finding(
+                severity="error",
+                message=f"首个发散：{diff.first.describe()}（另有 {diff.impacted} 步受影响）",
+                rule="equivalence/first-divergence",
+            )
+        )
+
+    details: dict[str, Any] = {
+        "tolerance": tol.as_dict(),
+        "compared_steps": diff.compared,
+        "impacted_steps": diff.impacted,
+        "inputs": strategy.provenance(),
+        "anchor_fingerprint": anchor.fingerprint(),
+    }
+    if diff.first is not None:
+        details["first_divergence"] = {
+            "seq": diff.first.seq,
+            "op": diff.first.op,
+            "label": diff.first.label,
+            "file": diff.first.file,
+            "line": diff.first.line,
+            "left": diff.first.left_summary,
+            "right": diff.first.right_summary,
+            "max_abs": diff.first.max_abs,
+            "max_rel": diff.first.max_rel,
+        }
+
+    return ToolResult(
+        tool="equivalence",
+        verdict=diff.verdict,
+        spec_hash=spec_hash,
+        engine_version=eq.EQUIVALENCE_ENGINE_VERSION,
+        trust=trust,
+        ir_fingerprint=module.fingerprint(),
+        diagnostics=diagnostics,
+        details=details,
+    )
+
+
 #: 工具名 → 运行函数（timeline 走 run_timeline 的 kwargs 分发）
 _TOOLS = {"ub_occupancy": run_ub_occupancy}
 
@@ -570,9 +698,11 @@ def run_tool(
 ) -> ToolResult:
     if name == "timeline":
         return run_timeline(config, module, spec_hash, **kwargs)
+    if name == "equivalence":
+        return run_equivalence(config, module, spec_hash, **kwargs)
     fn = _TOOLS.get(name)
     if fn is None:
-        raise KeyError(f"未知工具 {name!r}；已实现：ub_occupancy / timeline。equivalence 见 M3")
+        raise KeyError(f"未知工具 {name!r}；已实现：ub_occupancy / timeline / equivalence")
     return fn(config, module, spec_hash)
 
 

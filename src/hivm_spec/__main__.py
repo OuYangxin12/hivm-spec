@@ -1,6 +1,6 @@
 """hivm-spec CLI 入口（D2：统一薄 CLI，实现是"引擎 + 配置文档"）。
 
-`gen`/`check`/`tool ub_occupancy`/`tool timeline` 已实现（T0.x/T1.6/T2.x）；
+`gen`/`check`/`tool ub_occupancy`/`tool timeline`/`tool equivalence` 已实现（T0.x/T1.6/T2.x/T3.x）；
 `tool equivalence` 仍返回明确的 PENDING 退出码而非假成功——与
 `COVERAGE_GAP`/`UNTRUSTED_DESCRIPTION` 同一原则：缺口必须显式。
 """
@@ -23,7 +23,7 @@ EXIT_FAIL = 1
 EXIT_PENDING = 3  # 阶段未实现：可被脚本区分，不与"验证失败"混淆
 
 #: 已实现的工具（equivalence 属 M3，保持 PENDING）
-_IMPLEMENTED_TOOLS = ("ub_occupancy", "timeline")
+_IMPLEMENTED_TOOLS = ("ub_occupancy", "timeline", "equivalence")
 #: timeline 的策略选择（"random" 展开为全部固定种子，见 timeline.RANDOM_SEEDS）
 _STRATEGY_CHOICES = ("all", "sequential", "round_robin", "pipe_priority", "random")
 
@@ -73,13 +73,25 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="timeline：把时间线写为 Chrome Trace Event Format JSON（perfetto 可导入）",
     )
-    # D12：输入恒为单份 IR；仅等价验证取两份（待验 + 锚点）。不接受 pass 序列——
-    # 跨 pass 定位由 agent 对每份 dump 分别调用来编排（见 AGENTS.md §6）。
+    # 等价验证的锚点走**选项**而非第二个位置参数（M3 卡 §4 要点 1）：
+    # 位置参数恒为一份 IR，D12 的契约不破；同时"谁是被验证对象"在命令行上一眼
+    # 可辨——这直接关系到 verdict 归属谁。
+    #
+    # 注意：**没有"缺省自比"**。不给 --anchor 时 equivalence 报 COVERAGE_GAP，
+    # 绝不拿同一份 IR 自比后报 OK（§4 要点 2：那是最典型的自欺形态）。
+    p_tool.add_argument(
+        "--anchor",
+        metavar="IR",
+        default=None,
+        help="equivalence：对拍锚点 IR（通常是变换前的 dump）。缺省不自比，报 COVERAGE_GAP",
+    )
+    # D12：位置输入恒为单份 IR。不接受 pass 序列——跨 pass 定位由 agent 对每份
+    # dump 分别调用来编排（见 AGENTS.md §6）。
     p_tool.add_argument(
         "inputs",
         nargs="+",
         metavar="IR",
-        help="输入 MLIR：单份（占用/时序）或两份 <待验> <锚点>（等价验证）",
+        help="待验 MLIR（恒一份；等价验证的锚点用 --anchor）",
     )
 
     return ap
@@ -199,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         bound=args.bound,
         strategy=args.strategy,
         trace=args.trace,
+        anchor=args.anchor,
     )
 
 
@@ -223,6 +236,7 @@ def _cmd_tool(
     bound: int | None = None,
     strategy: str = "all",
     trace: str | None = None,
+    anchor: str | None = None,
 ) -> int:
     from hivm_spec.assemble import load_config, run_tool
     from hivm_spec.bindings import BindingsError
@@ -280,6 +294,30 @@ def _cmd_tool(
     kwargs: dict[str, Any] = {}
     if name == "timeline":
         kwargs = {"bound": bound, "strategies": _timeline_strategies(strategy)}
+    if name == "equivalence":
+        # 锚点单独 lower。**缺锚点不报错也不自比**——交给 run_equivalence 出
+        # COVERAGE_GAP（§4 要点 2），这样"没锚点"在结论里留痕，而不是命令失败
+        # 后被读作"环境问题"。
+        anchor_module = None
+        if anchor is not None:
+            anchor_path = Path(anchor)
+            if not anchor_path.is_file():
+                print(f"锚点 IR 不存在：{anchor_path}", file=sys.stderr)
+                return EXIT_FAIL
+            try:
+                anchor_lowered = lower_module_text(
+                    anchor_path.read_text(encoding="utf-8"),
+                    modeled,
+                    source=str(anchor_path),
+                    op_effects=effects,
+                    op_pipes=pipes,
+                    arch=config.get("arch", "a3"),
+                )
+            except BindingsError as exc:
+                print(f"环境不可用，未能验证锚点：{exc}", file=sys.stderr)
+                return EXIT_PENDING
+            anchor_module = anchor_lowered.module
+        kwargs = {"anchor": anchor_module, "bound": bound}
     result = run_tool(name, config, lowered.module, spec_hash, **kwargs)
     print(result.render())
 
