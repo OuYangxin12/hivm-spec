@@ -77,6 +77,7 @@
 
 | 任务 | 内容 | 验收 |
 |---|---|---|
+| **T3.0** | **对拍主仓 C++ 链，销 M2 遗留语义假设**（`timeline/flag-initial-state`、`timeline/pair-direction`；由 M2 复审产生，见 `docs/tasks/M2.md` §10.4） | 假设移出 `frozen_by_assumption` 或转 drift 条目；若 flag 初态实为未装载，`INITIAL_ARM` 修订 + L0 注入用例期望重跑 |
 | T3.1 | 双模值具体模式引擎 + **符号句柄 API 定稿**（受限子集；D4/OD1 方案 A） | 同一 op 函数双模式输出一致（具体小例） |
 | T3.2 | 控制流解释：**复用 VIR 的 `VRegion`/`VLoop` 与 T0.0 值槽位**（D6/D8，扩展而非重写）；scf.for/if/while + 社区方言语义内置（arith/memref/tensor 子集按需扩展） | 目标 kernel 可解释执行；遍历核仍唯一 |
 | T3.3 | 数值基础设施：ml_dtypes（f16/bf16）；round_mode 显式表达 | 定点样例对拍一致 |
