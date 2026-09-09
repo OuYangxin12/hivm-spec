@@ -5,11 +5,12 @@
 # 直接 rsync 会得到 139 个悬空链接（本项目已踩过），故必须用 -L 解引用。
 #
 # 用法：
-#   bash scripts/setup_bindings.sh [目标目录]     # 默认 /tmp/bindings
-#   export HIVM_SPEC_BINDINGS=/tmp/bindings       # 引擎据此定位
+#   bash scripts/setup_bindings.sh [目标目录]
+#     默认 <仓库>/.bindings（持久；家目录与 /var/tmp 常为只读，/tmp 会被清理）
+#   export HIVM_SPEC_BINDINGS=<目标目录>           # 引擎据此定位
 set -euo pipefail
 
-DEST="${1:-/tmp/bindings}"
+DEST="${1:-${HIVM_SPEC_BINDINGS:-$(cd "$(dirname "$0")/.." && pwd)/.bindings}}"
 REMOTE="${HIVM_SPEC_BUILD_HOST:-build}"
 REMOTE_PATH="~/proj/AscendNPU-IR/build/tools/bishengir/bishengir/python_packages/bishengir/"
 

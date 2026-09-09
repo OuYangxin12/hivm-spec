@@ -7,3 +7,5 @@ build/
 .pytest_cache/
 .coverage
 *.egg-info/
+.venv310/
+.bindings/
