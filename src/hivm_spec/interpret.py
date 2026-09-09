@@ -24,7 +24,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from hivm_spec.timeline import expand_steps
@@ -84,6 +85,12 @@ class ExecResult:
     #: 展开是否被截断（继承 expand_steps 的口径）
     truncated: bool = False
     truncation_notes: tuple[str, ...] = ()
+    #: 每一步的输出值（展开序号 → 值）。
+    #
+    # 差分对拍要按**步**比较中间值，而 env 只留每个 SSA/缓冲区的**最终**内容
+    # ——循环里同一缓冲区被写 N 次，env 里只剩最后一次。若只靠 env，首发散点
+    # 就只能定位到"某个缓冲区最终不对"，而不是"第 2 次迭代开始不对"（T3.6）。
+    values_by_seq: dict[int, Value] = field(default_factory=dict)
 
     @property
     def has_unmodeled(self) -> bool:
@@ -145,7 +152,7 @@ def _param_names(config: dict[str, Any], op: str) -> tuple[tuple[str, ...], tupl
 def interpret(
     module: VModule,
     config: dict[str, Any],
-    inputs: dict[str, Value],
+    inputs: Mapping[str, Value],
     *,
     bound: int | None = None,
 ) -> ExecResult:
@@ -170,6 +177,8 @@ def interpret(
     traces: list[OpTrace] = []
     gaps: list[Gap] = []
     reported: set[str] = set()
+    #: 逐步输出值——差分对拍按步比较中间值时需要（env 只留最终内容）
+    by_seq: dict[int, Value] = {}
 
     def _key(ssa: str, path: tuple[int, ...]) -> str:
         """迭代限定名：循环体内同一 SSA 在每次迭代是不同的值实例。
@@ -291,11 +300,13 @@ def interpret(
                 out_hash=value_hash(out),
             )
         )
+        by_seq[step.seq] = out
 
     return ExecResult(
         traces=tuple(traces),
         env=env,
         gaps=tuple(gaps),
+        values_by_seq=by_seq,
         truncated=exp.truncated,
         truncation_notes=exp.truncation_notes,
     )
