@@ -23,15 +23,19 @@ python scripts/spec_gate.py --base origin/main --head HEAD
 pytest specs/cases -q
 ```
 
-**本地 merge 到 main（未推送、CI 跑不到）时，必须先跑本地合入门禁：**
+**默认路径恒为 feature 分支 → PR → CI 全绿 → 合入。** 直推 `main` 会被远端拒绝
+（`GH013: Changes must be made through a pull request`）——分支保护始终有效。
+
+**仅在确实离线时**，才允许本地 merge 到 main 作为临时手段，且必须先跑：
 
 ```bash
 python scripts/merge_gate.py          # 全绿方可 merge，证据落 build/merge-gate.json
 ```
 
-远端分支保护与 CI 在本地合入路径上结构性失效（feature 分支没上过远端）。
 该脚本跑 CI 门禁的本地等价物并留下可审计证据；工作区不干净即拒绝。
-详见 milestone-plan §8「本地合入例外」。
+**恢复联网后必须立即补 PR**，交 CI 裁决——在 CI 通过前，那些提交只算"本地自测
+通过"，不得据此宣称已满足 D5。本地门禁与 CI 不等价（CI 还覆盖 py3.12 一档）。
+详见 milestone-plan §8「本地合入：仅限离线，且必须补 PR」。
 
 **改 HIVM pass（主仓侧）后，须跑对应 spec 工具**（M1 起可用）：
 
