@@ -134,30 +134,32 @@ spec.check("timeline", scheduling="conservative", strategies=4, unroll_bound=16)
 
 # --- 语义假设段：未经对拍的口径必须登记（D9 前置，M2 审查发现 3） ----------
 
-# 此前这些假设只写在 docs/tasks/M2.md §9 的散文里——机器读不到、结论里也不
-# 声明，等于把全模型最敏感的语义决策留在账本之外。登记后：进配置文档与信任
-# 账本（frozen_by_assumption 冻结 trust 升级），直到与主仓 C++ 链对拍销案。
+# 登记后进配置文档与信任账本（frozen_by_assumption 冻结 trust 升级），直到与
+# 主仓 C++ 链对拍销案。对拍记录见 docs/crosscheck/T3.0-flag-semantics.md。
+#
+# T3.0 已销案（不再登记，故此处无条目）：
+#   · timeline/pair-direction —— 已确证与主仓一致。HIVMSynchronizationOps.td
+#     中 SetFlagOp 与 WaitFlagOp 的参数顺序完全相同（set_pipe, wait_pipe,
+#     event_id），配对双方在同一 (set_pipe, wait_pipe) 对上，方向对"谁配谁"
+#     不产生歧义。我方"只按 event id 配对"的口径正确且更稳健。
+
 spec.assume(
     "timeline/flag-initial-state",
-    "flag 初态 = 已装载（INITIAL_ARM=1，set 视为 re-arm）",
-    authority="upstream-cpp",
+    "flag 物理初态未经硬件确证；判定按 INITIAL_ARM=1（已装载）建模",
+    authority="hardware-golden",  # T3.0 已确认主仓 C++ 链不定义此值 → 只能由 golden 仲裁
     rationale=(
-        "M1 卡『首个 re-arm set』措辞隐含 flag 出厂即 armed；且初态已装载使等待"
-        "更易放行，方向上压制假阳性死锁（NFR2）。同泳道 1:1 配平 + 初始装载 = "
-        "自续握手（健康），2:1 起才饿死。"
+        "T3.0 对拍结论（docs/crosscheck/T3.0-flag-semantics.md §3）：主仓 C++ 链"
+        "**没有显式建模** flag 初态——方言定义、GSS 求解器/代码生成器、官方文档"
+        "均无相关约束。因为它不需要：全仓 73 个 (文件,event) 组合中 71 例首次"
+        "出现即为 set，2 例反例已查明是 macro 内部 set（sync_event_slot<...,set>），"
+        "即**主仓生成的代码从不依赖 flag 出厂已装载**。"
+        "故取 1 与取 0 对真实 IR 判定等价；保留 1 是因为它在'主仓不会生成的形态'"
+        "（wait 先于任何 set）上更宽松，避免对非主仓产出的 IR 误报（NFR2）。"
+        "实测影响面：改为 0 只使 cross_iter_event_pair.mlir 由 OK 变 DEADLOCK，"
+        "其余 10 份 L0 语料判定不变。"
     ),
-    # 若真实初态为未装载（0），wait-before-first-set 的真实死锁会被放行
+    # 风险已由 false-negative 降级：主仓不生成 wait-before-any-set，故该假阴性
+    # 在真实 IR 上不可达；残余风险仅存在于手写/第三方 IR，且需硬件 golden 才能定值
     risk_direction="false-negative",
-    resolve_by="M3",
-)
-spec.assume(
-    "timeline/pair-direction",
-    "set/wait 配对只按 event id，不依赖 set_pipe/wait_pipe 的方向约定",
-    authority="upstream-cpp",
-    rationale=(
-        "IR 括号中 set_pipe/wait_pipe 的方向语义尚未与主仓 C++ 链对拍定稿，"
-        "判定刻意不依赖方向（方向只影响展示与泳道归属）。"
-    ),
-    risk_direction="both",
-    resolve_by="M3",
+    resolve_by="硬件 golden（框架 §8.1 唯一仲裁路径；NFR3 下为离线稀疏活动，非 M3 阻塞项）",
 )

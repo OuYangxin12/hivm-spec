@@ -300,6 +300,12 @@ class VSync:
     #: 配对候选（同 flag 的反向节点 id）；由 M2 分析填充旁挂结构，
     #: 此处仅在 IR 已显式标注时记录
     pair_candidates: tuple[str, ...] = ()
+    #: True 表示该同步**不是 IR 里的显式 op**，而是从属性推断出来的隐式事件。
+    #: 目前唯一来源：CustomMacroOp 的 `sync_event_slots`——`macro_sync=set/wait`
+    #: 表示 set/wait 发生在 macro 内部（IR 不可见）。不计入供需账目会让规则 A/C
+    #: 误判（T3.0 对拍发现，见 docs/crosscheck/T3.0-flag-semantics.md §5）。
+    #: 诊断需据此说明"该事件由 macro 内部提供"，避免把位置指到 macro 调用点。
+    implicit: bool = False
 
     def __post_init__(self) -> None:
         if not self.node_id:

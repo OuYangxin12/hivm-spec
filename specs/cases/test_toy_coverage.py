@@ -80,6 +80,16 @@ def test_l0_ops_are_modeled_or_declared_as_gap(path: Path) -> None:
         assert unmodeled, "该语料的存在意义就是含未建模 op，否则它无法验证缺口路径"
         return
 
+    # 登记豁免：hivm.hir.custom_macro 是**不透明**的用户宏——其内部语义按定义
+    # 不可见（这正是 macro_internal_set_slot.mlir 要验证的形态）。建模它等于
+    # 假装知道 macro 里发生了什么，故刻意不建模、接受 COVERAGE_GAP。
+    # 该语料验证的是 sync_event_slots **属性**的记账，与 op 是否建模无关。
+    if path.name == "macro_internal_set_slot.mlir":
+        assert unmodeled == {"hivm.hir.custom_macro"}, (
+            "该语料的豁免范围仅限不透明 macro；出现其他未建模 op 说明语料被改动"
+        )
+        return
+
     assert not unmodeled, (
         f"{path.name} 含未被 toy 描述建模的 op：{sorted(unmodeled)}——"
         "要么补描述，要么明确接受 COVERAGE_GAP 并在此登记豁免"
