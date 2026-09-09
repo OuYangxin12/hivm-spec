@@ -45,8 +45,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      # numeric extra 带 ml_dtypes：bf16 是 T3.3 的核心 dtype，不装的话相关
+      # 测试全被 skip，等于 bf16 路径在 CI 里毫无保护。
       - name: Install
-        run: python -m pip install -e ".[test]"
+        run: python -m pip install -e ".[test,numeric]"
       - name: Pytest (bindings-free subset)
         run: pytest -m "not requires_bindings" -q
 

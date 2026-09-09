@@ -131,6 +131,13 @@ spec.op(
 # 界只影响探索口径，结论恒携带"展开界"限定语（T2.5）。
 spec.check("ub_occupancy", spaces=["ub", "cbuf"])
 spec.check("timeline", scheduling="conservative", strategies=4, unroll_bound=16)
+# 等价验证（M3）。容差在**描述里**声明，故自动进 spec_hash——"放宽容差"因此是
+# 一次可审计的描述变更，而不是命令行上悄悄调一个数（M3 卡 §4 要点 3）。
+# 口径：rtol 管相对误差、atol 管接近零的绝对误差，二者缺一不可（OD3）。
+# 1e-5/1e-8 取 numpy allclose 的默认量级，对 f32 逐元素运算足够；f16/bf16 语料
+# 若超差，应按 dtype 显式放宽并记录理由，不得全局调松。
+# round_mode 取值与主仓 HIVM_RoundModeEnum 一致（HIVMAttrs.td:440）。
+spec.check("equivalence", rtol=1e-5, atol=1e-8, round_mode="rint")
 
 # --- 语义假设段：未经对拍的口径必须登记（D9 前置，M2 审查发现 3） ----------
 
