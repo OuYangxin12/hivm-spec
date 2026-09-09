@@ -80,9 +80,19 @@ def test_upstream_entries_anchor_a_source_commit(manifest: dict) -> None:
 
 
 def test_l0_is_handwritten_and_small(manifest: dict) -> None:
-    """L0 必须完全自控且微小——它要验的是 VIR 不变量，不是真实语料的复杂度。"""
+    """L0 必须完全自控且微小——它要验的是 VIR 不变量，不是真实语料的复杂度。
+
+    **规模口径（M2 审查后修订）**：D13 的"5–8 个"是 T0.0 时点为覆盖 VIR 四
+    不变量所定的**基线结构**规模；而注入缺陷语料按 requirements Q3 是"最小集
+    + 随里程碑扩展"（M1 溢出注入 → M2 配对注入 → M3 语义注入）。两者混计会让
+    "补一个注入回归例"与"L0 膨胀失控"撞上同一个断言——前者是被鼓励的，后者
+    才是要防的。故按用途分段计量：基线结构仍守 5–8，注入/对照例单独设上限。
+    """
     l0 = [e for e in manifest["entries"] if e["layer"] == "l0"]
-    assert 5 <= len(l0) <= 8, f"L0 规模应为 5–8 个（D13），实为 {len(l0)}"
+    injected = [e for e in l0 if "注入" in e.get("notes", "") or "健康对照" in e.get("notes", "")]
+    baseline = [e for e in l0 if e not in injected]
+    assert 5 <= len(baseline) <= 8, f"L0 基线结构应为 5–8 个（D13），实为 {len(baseline)}"
+    assert len(injected) <= 8, f"L0 注入/对照例上限 8 个（防膨胀），实为 {len(injected)}"
     for e in l0:
         assert e["origin"] == "handwritten"
         n = len((CORPUS / e["path"]).read_text(encoding="utf-8").splitlines())

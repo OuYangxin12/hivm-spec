@@ -34,6 +34,10 @@ def _trust_of(config: dict[str, Any]) -> str:
     """配置文档中的最高信任级别。
 
     取**最高**而非最低是刻意的：结论旁的信任标注要回答"这个结论最多能有多可信"。
+
+    **未决语义假设封顶**（D9 前置，M2 审查发现 3）：只要描述里还有未对拍的
+    语义假设（`assumptions` 非空），信任一律封顶 `provisional`——语义尚未与
+    权威链对齐就宣称更高信任，等于把猜测当结论。
     """
     order = ["provisional", "cross-validated", "anchored"]
     best = "provisional"
@@ -41,6 +45,8 @@ def _trust_of(config: dict[str, Any]) -> str:
         t = op.get("trust", "provisional")
         if t in order and order.index(t) > order.index(best):
             best = t
+    if config.get("assumptions"):
+        return "provisional"
     return best
 
 
@@ -296,27 +302,39 @@ def run_timeline(
         elif s.kind in _TL_WAIT_KINDS:
             slot["waits"] += 1
 
-    # -- 策略层观察（schedule 依赖，不进 verdict） -------------------------
-    strategy_blocked: list[dict[str, Any]] = []
+    # -- 策略层观察（不进 verdict；须区分 schedule 依赖 / 不变） ------------
+    # 受阻性质判别（审查发现 1b）：全策略受阻集合一致 = schedule-invariant，
+    # 不得再表述为"schedule 依赖观察"——那是把已观测到的不变量说成偶然。
+    blocked_kind = tl.classify_blocked({sim.strategy: sim.blocked for sim in sims})
+    deadlock_seqs = {d.step_seq for d in deadlocks}
+    #: 按 (step_seq) 聚合，避免 策略数×受阻步数 的笛卡尔噪声淹没摘要
+    blocked_by_step: dict[int, list[str]] = {}
     for sim in sims:
         for seq in sim.blocked:
-            st = expansion.steps[seq]
-            ev = tl.event_of(st)
-            # 确定性层已判定为死锁的 wait 不重复报告
-            if any(d.step_seq == seq for d in deadlocks):
-                continue
-            strategy_blocked.append(
-                {
-                    "strategy": sim.strategy,
-                    "step_seq": seq,
-                    "event_id": ev,
-                    "loc": st.node.loc.describe(),
-                    "message": (
-                        f"策略 {sim.strategy} 下 wait(事件 {ev}) 受阻——schedule 依赖观察，"
-                        "非确定性死锁判定"
-                    ),
-                }
-            )
+            if seq in deadlock_seqs:
+                continue  # 确定性层已判定为死锁的 wait 不重复报告
+            blocked_by_step.setdefault(seq, []).append(sim.strategy)
+    strategy_blocked: list[dict[str, Any]] = []
+    for seq, strats in sorted(blocked_by_step.items()):
+        st = expansion.steps[seq]
+        ev = tl.event_of(st)
+        invariant = len(strats) == len(sims)
+        nature = (
+            "全部策略下均受阻——与调度选择无关（schedule-invariant）"
+            if invariant
+            else f"{len(strats)}/{len(sims)} 个策略下受阻——schedule 依赖观察"
+        )
+        strategy_blocked.append(
+            {
+                "strategy": strats[0] if len(strats) == 1 else "|".join(strats),
+                "strategies": strats,
+                "schedule_invariant": invariant,
+                "step_seq": seq,
+                "event_id": ev,
+                "loc": st.node.loc.describe(),
+                "message": f"wait(事件 {ev}) {nature}，非确定性死锁判定",
+            }
+        )
 
     # -- verdict 裁决：DEADLOCK > COVERAGE_GAP > OK ------------------------
     if deadlocks:
@@ -339,6 +357,14 @@ def run_timeline(
         claim += "；另有确定性死锁判定，见 deadlocks/诊断"
     elif verdict is Verdict.COVERAGE_GAP:
         claim = "覆盖不完整，探索层结论已降级为 COVERAGE_GAP，不构成'无死锁'依据"
+    # 审查发现 1c：claim 不得与自身 diagnostics 矛盾——存在全策略一致受阻时，
+    # "未发现死锁"必须附带该保留（截断是其最常见成因，见 truncation_notes）
+    if verdict is not Verdict.DEADLOCK and blocked_kind == "schedule-invariant":
+        n_inv = sum(1 for item in strategy_blocked if item["schedule_invariant"])
+        claim += (
+            f"；但有 {n_inv} 个 wait 在**全部策略**下均受阻（schedule-invariant，"
+            "确定性层未能归类）——不可读作'无死锁'"
+        )
 
     # -- diagnostics -------------------------------------------------------
     findings: list[Finding] = []
@@ -395,8 +421,17 @@ def run_timeline(
                     severity="warning",
                     message=item["message"],
                     loc=None,
-                    rule="timeline/strategy-blocked",
-                    extra={"strategy": item["strategy"], "event_id": item["event_id"]},
+                    rule=(
+                        "timeline/blocked-schedule-invariant"
+                        if item["schedule_invariant"]
+                        else "timeline/strategy-blocked"
+                    ),
+                    extra={
+                        "strategy": item["strategy"],
+                        "strategies": item["strategies"],
+                        "event_id": item["event_id"],
+                        "schedule_invariant": item["schedule_invariant"],
+                    },
                 )
             )
     if verdict is Verdict.OK:
@@ -429,8 +464,32 @@ def run_timeline(
         ],
         "exploration": {
             "claim": claim,
+            "blocked_kind": blocked_kind,
             "strategy_blocked": strategy_blocked,
         },
+        #: 规则 C 的算术证据（无论是否触发判定都输出——供需账目本身即诊断材料）
+        "arm_supply": [
+            {
+                "event_id": d.event_id,
+                "waits": d.waits,
+                "sets": d.sets,
+                "initial_arm": d.initial_arm,
+                "starved": d.starved,
+            }
+            for d in tl.arm_deficits(expansion.steps)
+        ],
+        #: 本结论所依赖的未对拍语义假设（D9 前置）——判定前提必须随结论可见，
+        #: 否则读者无法判断"DEADLOCK/OK"是在哪套语义口径下成立的
+        "assumptions": [
+            {
+                "subject": a.get("subject", ""),
+                "assumed": a.get("assumed", ""),
+                "risk_direction": a.get("risk_direction", ""),
+                "resolve_by": a.get("resolve_by", ""),
+            }
+            for a in config.get("assumptions", [])
+            if str(a.get("subject", "")).startswith("timeline/")
+        ],
         "timelines": {},
     }
     for sim in sims:

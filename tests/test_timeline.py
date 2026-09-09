@@ -167,6 +167,97 @@ def test_truncation_prevents_false_cycle_deadlock() -> None:
     assert "截断" in r.details["exploration"]["claim"]  # type: ignore[attr-defined]
 
 
+def test_crosslane_arm_deficit_is_deterministic_deadlock() -> None:
+    """规则 C：跨泳道 2 wait : 1 set —— 异道 set 永远可达，规则 A/B 均不触发。
+
+    这是 M2 审查发现 1 的回归面：本形态（生产者 set / 消费者 wait，流水线握手
+    的常态）曾被判 OK/exit 0，而 16 wait 只有 8 set + 1 初装可供应，7 个 wait
+    实际永久饿死。规则 C 以纯计数论证补上：与交错顺序无关的确定性结论。
+    """
+    w1, ws1 = _sync("w1", "wait_flag", 0, "PIPE_V")
+    w2, ws2 = _sync("w2", "wait_flag", 0, "PIPE_V")
+    s, ss = _sync("s", "set_flag", 0, "PIPE_MTE2")  # 异道！set 不被 wait 挡住
+    m = _module((_loop((w1, w2, s), 8),), (ws1, ws2, ss))
+    r = _run(m)  # type: ignore[arg-type]
+    assert r.verdict is Verdict.DEADLOCK  # type: ignore[attr-defined]
+    assert r.exit_code == 1  # type: ignore[attr-defined]
+    findings = [d for d in r.diagnostics if d.rule == "timeline/arm-deficit"]  # type: ignore[attr-defined]
+    assert len(findings) == 1
+    # 供需账目须落 details（诊断材料，FR5）
+    supply = r.details["arm_supply"]  # type: ignore[attr-defined]
+    assert supply == [{"event_id": 0, "waits": 16, "sets": 8, "initial_arm": 1, "starved": 7}]
+    assert r.details["deadlocks"][0]["rule"] == "arm-deficit"  # type: ignore[attr-defined]
+
+
+def test_crosslane_balanced_handshake_is_healthy() -> None:
+    """规则 C 的假阳性防线：跨泳道 1:1 配平握手 = 真实双缓冲流水，必须 OK。
+
+    规则 C 是**放宽判定**方向的变更（新增 DEADLOCK 触发路径），最大风险正是
+    把健康流水误判为死锁（NFR2 优先压制的一侧）。与上一例仅差一次 set。
+    """
+    w, ws = _sync("w", "wait_flag", 0, "PIPE_V")
+    s, ss = _sync("s", "set_flag", 0, "PIPE_MTE2")
+    m = _module((_loop((w, s), 8),), (ws, ss))
+    r = _run(m)  # type: ignore[arg-type]
+    assert r.verdict is Verdict.OK  # type: ignore[attr-defined]
+    assert r.details["arm_supply"] == []  # type: ignore[attr-defined]
+    assert r.details["exploration"]["blocked_kind"] == "none"  # type: ignore[attr-defined]
+    assert "schedule-invariant" not in r.details["exploration"]["claim"]  # type: ignore[attr-defined]
+
+
+def test_arm_deficit_suppressed_under_truncation() -> None:
+    """截断保护同样覆盖规则 C：截断会人为削减 set 供给，制造**假短缺**。
+
+    与 test_truncation_prevents_false_cycle_deadlock 同一哲学（NFR2）：
+    展开界不足导致的"供不应求"不是 IR 的性质，而是分析的局限。
+    """
+    w1, ws1 = _sync("w1", "wait_flag", 0, "PIPE_V")
+    w2, ws2 = _sync("w2", "wait_flag", 0, "PIPE_V")
+    s, ss = _sync("s", "set_flag", 0, "PIPE_MTE2")
+    m = _module((_loop((w1, w2, s), None),), (ws1, ws2, ss))  # trip 未知 → 截断
+    r = _run(m, bound=4)  # type: ignore[arg-type]
+    assert r.verdict is not Verdict.DEADLOCK  # type: ignore[attr-defined]
+    assert r.details["truncated"] is True  # type: ignore[attr-defined]
+
+
+def test_schedule_invariant_blocking_is_not_called_schedule_dependent() -> None:
+    """审查发现 1b/1c：全策略受阻集合一致时，不得表述为"schedule 依赖"。
+
+    截断使规则 C 降级（见上一例），但受阻观察仍然存在且**与调度无关**——
+    此时诊断必须点名 schedule-invariant，且 claim 不得与自身诊断矛盾地
+    只说"未发现死锁"。工具不能把自己已观测到的不变量说成偶然。
+    """
+    w1, ws1 = _sync("w1", "wait_flag", 0, "PIPE_V")
+    w2, ws2 = _sync("w2", "wait_flag", 0, "PIPE_V")
+    s, ss = _sync("s", "set_flag", 0, "PIPE_MTE2")
+    m = _module((_loop((w1, w2, s), None),), (ws1, ws2, ss))
+    r = _run(m, bound=4)  # type: ignore[arg-type]
+    assert r.details["exploration"]["blocked_kind"] == "schedule-invariant"  # type: ignore[attr-defined]
+    assert any(  # type: ignore[attr-defined]
+        d.rule == "timeline/blocked-schedule-invariant" for d in r.diagnostics
+    )
+    claim = r.details["exploration"]["claim"]  # type: ignore[attr-defined]
+    assert "schedule-invariant" in claim and "不可读作" in claim
+
+
+def test_strategy_blocked_diagnostics_are_aggregated_by_step() -> None:
+    """受阻诊断按步骤聚合，不按 策略×步骤 笛卡尔展开（摘要不可被淹没，FR5）。
+
+    修复前：7 策略 × 7 受阻步 = 49 条同质 warning。聚合后每步一条，并在
+    extra.strategies 里保留完整策略清单（信息不丢，噪声不留）。
+    """
+    w1, ws1 = _sync("w1", "wait_flag", 0, "PIPE_V")
+    w2, ws2 = _sync("w2", "wait_flag", 0, "PIPE_V")
+    s, ss = _sync("s", "set_flag", 0, "PIPE_MTE2")
+    m = _module((_loop((w1, w2, s), None),), (ws1, ws2, ss))
+    r = _run(m, bound=4)  # type: ignore[arg-type]
+    blocked = r.details["exploration"]["strategy_blocked"]  # type: ignore[attr-defined]
+    seqs = [item["step_seq"] for item in blocked]
+    assert len(seqs) == len(set(seqs)), "同一受阻步不得重复成条"
+    assert all(item["schedule_invariant"] for item in blocked)
+    assert all(len(item["strategies"]) == len(r.details["strategies"]) for item in blocked)  # type: ignore[attr-defined]
+
+
 def test_vacuous_module_is_coverage_gap() -> None:
     """空洞 OK 防线：无任何同步结构时，"未发现死锁"不是结论而是无知。"""
     m = _module((_op("n1"),), ())
@@ -239,12 +330,13 @@ def test_run_timeline_is_deterministic() -> None:
     assert r1.to_json_bytes() == r2.to_json_bytes()  # type: ignore[attr-defined]
 
 
-def test_strategy_blocked_is_warning_not_verdict() -> None:
-    """一个事件三个等待者、只有一次 set：必有一个饿死，但属 schedule 依赖 → 只进 diagnostics。
+def test_three_waiters_one_set_is_arm_deficit() -> None:
+    """一个事件三个等待者、只有一次 set → 规则 C 判定（M2 审查后修订）。
 
-    NFR2：误判（假阳性死锁）优先压制。set 在其泳道首位（可达、会执行），
-    确定性层不判死锁；初始装载 + 1 次 set 共 2 个 arm，第 3 个 wait 依
-    调度顺序决定谁饿死——策略层受阻作为观察报告。
+    **本测试的历史**：修复前它断言 verdict OK 并把受阻归为"schedule 依赖"，
+    可它自己的 docstring 就写着"必有一个饿死"——供给 2 个 arm（初装 + 1 set）
+    对 3 个 wait，缺口 1。调度只决定**谁**饿死，不改变**有一个必饿死**。
+    这正是审查发现 1 的病灶被固化进测试的实例，故按事实改判为 DEADLOCK。
     """
     s, ss = _sync("s", "set_flag", 0, "PIPE_MTE2")  # 泳道首位——可达
     wv, wsv = _sync("wv", "wait_flag", 0, "PIPE_V")
@@ -252,11 +344,28 @@ def test_strategy_blocked_is_warning_not_verdict() -> None:
     wm, wsm = _sync("wm", "wait_flag", 0, "PIPE_MTE2")
     m = _module((s, wv, wv2, wm), (ss, wsv, wsv2, wsm))
     r = _run(m)  # type: ignore[arg-type]
+    assert r.verdict is Verdict.DEADLOCK  # type: ignore[attr-defined]
+    assert r.details["arm_supply"] == [  # type: ignore[attr-defined]
+        {"event_id": 0, "waits": 3, "sets": 1, "initial_arm": 1, "starved": 1}
+    ]
+    assert any(d.rule == "timeline/arm-deficit" for d in r.diagnostics)  # type: ignore[attr-defined]
+
+
+def test_strategy_blocked_is_warning_not_verdict() -> None:
+    """供给充足但存在受阻可能 → 只进 diagnostics，不改 verdict（NFR2 原意）。
+
+    守住原测试的**真正意图**：策略层观察不得升格为判定。构造供需平衡
+    （2 wait : 2 set + 初装，无短缺 ⇒ 规则 C 不触发）、且 set 均可达
+    （异道，规则 B 不触发）——确定性层三条规则全不触发，verdict 必须 OK。
+    """
+    s1, ss1 = _sync("s1", "set_flag", 0, "PIPE_MTE2")
+    s2, ss2 = _sync("s2", "set_flag", 0, "PIPE_MTE2")
+    wv, wsv = _sync("wv", "wait_flag", 0, "PIPE_V")
+    wv2, wsv2 = _sync("wv2", "wait_flag", 0, "PIPE_V")
+    m = _module((s1, wv, wv2, s2), (ss1, wsv, wsv2, ss2))
+    r = _run(m)  # type: ignore[arg-type]
     assert r.verdict is Verdict.OK  # type: ignore[attr-defined]
-    assert r.details["exploration"]["strategy_blocked"], "应有策略层受阻观察"  # type: ignore[attr-defined]
-    assert any(  # type: ignore[attr-defined]
-        d.rule == "timeline/strategy-blocked" for d in r.diagnostics
-    )
+    assert r.details["arm_supply"] == []  # type: ignore[attr-defined]
 
 
 def test_gantt_marks_blocked_wait() -> None:

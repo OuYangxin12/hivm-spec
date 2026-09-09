@@ -122,6 +122,13 @@ _KIND_MARK = {
     "pipe_barrier": "≡",
 }
 _BLOCKED_MARK = "×"
+#: 文本行硬上限（设计约束 2：终端不折行）
+_MAX_LINE = 80
+
+
+def _clip(line: str, limit: int = _MAX_LINE) -> str:
+    """把摘要行收进行宽，超长时以 `…` 显式提示有下文（截断不得静默）。"""
+    return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
 def render_timeline_chart(details: dict[str, Any]) -> str:
@@ -186,11 +193,13 @@ def render_timeline_chart(details: dict[str, Any]) -> str:
         lines.append(f"  {lane:<12s} {cells}")
     lines.append("  图例：· op　▲ set　▽ wait　≡ barrier　× 受阻 wait")
     for note in details.get("truncation_notes", [])[:2]:
-        lines.append(f"  ⚠ {note}")
+        lines.append(_clip(f"  ⚠ {note}"))
     deadlocks = details.get("deadlocks", [])
     if deadlocks:
         d0 = deadlocks[0]
-        lines.append(f"  ✗ 死锁：{d0['message']} @ {d0['loc']}")
+        # 摘要行必须收进行宽（设计约束 2）：完整 message 在 diagnostics/JSON 里，
+        # 视图层只负责"看得见"，不负责"看得全"——但省略号必须显式提示有下文。
+        lines.append(_clip(f"  ✗ 死锁：{d0['message']} @ {d0['loc']}"))
     return "\n".join(lines)
 
 

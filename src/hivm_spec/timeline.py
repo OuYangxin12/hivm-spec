@@ -32,11 +32,21 @@
   - **规则 B（wait-cycle）**：事件存在 set，但展开域内的全部 set 在两种
     贪心序下都被前置阻塞 wait 挡住（wait-for 环），且**无截断** → 结构性
     死锁；有截断时降级为探索层观察（截断可能人为切断 set 可达性）。
-  只有规则 A/B 才产生 `DEADLOCK` verdict——确定性结论不依赖策略探索。
+  - **规则 C（arm-deficit）**：展开域内某事件的 wait 次数 > set 次数 +
+    `INITIAL_ARM`（供给 < 需求），且**无截断** → 必有 wait 永久饿死。
+    这是**纯算术、与交错顺序无关**的结论：任何调度都无法凭空造出 arm。
+    规则 B 覆盖不到跨泳道形态（异道 set 永远可达 → "set 不可达"不成立），
+    而跨泳道恰是流水线握手的常态（生产者 set / 消费者 wait），故必须单列
+    （审查发现 1，见 `arm_deficits`）。
+  规则 A/B/C 才产生 `DEADLOCK` verdict——确定性结论不依赖策略探索。
 - **探索层（`simulate`）**：交错策略集（顺序/轮转/pipe 优先/K 随机种子）
-  产出时间线视图。策略下的 wait 受阻是 **schedule 依赖的观察**，只进
-  diagnostics（NFR2：误判优先压制），不产生 verdict；探索层负向结论恒为
-  "在{策略集}×{展开界}内未发现"（T2.5 措辞，禁止无条件"无死锁"）。
+  产出时间线视图。策略下的 wait 受阻只进 diagnostics（NFR2：误判优先压制），
+  不产生 verdict；探索层负向结论恒为"在{策略集}×{展开界}内未发现"
+  （T2.5 措辞，禁止无条件"无死锁"）。**受阻观察必须区分两类**：受阻集合随
+  策略变化 = `schedule-dependent`（真·调度巧合）；全策略受阻集合**完全一致**
+  = `schedule-invariant`——后者不得再声称"schedule 依赖"，它是确定性层未能
+  归类的残余，须在诊断中显式点名（否则工具会把自己已观测到的不变量说成偶然）。
+  判别见 `classify_blocked`。
 """
 
 from __future__ import annotations
@@ -50,14 +60,18 @@ from hivm_spec.vir import Loc, SyncKind, VModule, VNode, VSync
 
 __all__ = [
     "DEFAULT_BOUND",
+    "INITIAL_ARM",
     "MAX_STATIC_TRIP",
     "RANDOM_SEEDS",
     "STRATEGIES",
     "TIMELINE_ENGINE_VERSION",
+    "ArmDeficit",
     "DeadlockFinding",
     "Expansion",
     "SimResult",
     "TStep",
+    "arm_deficits",
+    "classify_blocked",
     "event_of",
     "events_with_any_set",
     "expand_steps",
@@ -65,7 +79,7 @@ __all__ = [
     "structural_fixpoint",
 ]
 
-TIMELINE_ENGINE_VERSION = "0.1.0"
+TIMELINE_ENGINE_VERSION = "0.2.0"
 
 #: 静态 trip 的全量展开安全上限：超过则按界截断（防步数爆炸）。
 MAX_STATIC_TRIP = 256
@@ -344,11 +358,71 @@ class _Semantics:
 class DeadlockFinding:
     """一条结构性死锁（确定性结论）。"""
 
-    rule: str  # "unpaired-wait" | "wait-cycle"
+    rule: str  # "unpaired-wait" | "wait-cycle" | "arm-deficit"
     event_id: int | None
     step_seq: int
     loc: Loc
     message: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArmDeficit:
+    """规则 C 的算术证据：展开域内某事件的 arm 供给短缺。
+
+    `waits > sets + INITIAL_ARM` 时必有 `waits - sets - INITIAL_ARM` 个 wait
+    永久饿死——**与交错顺序无关**，因为任何调度都不改变两侧计数。
+    """
+
+    event_id: int
+    waits: int
+    sets: int
+    initial_arm: int
+
+    @property
+    def starved(self) -> int:
+        """必然饿死的 wait 数（供给缺口）。"""
+        return self.waits - self.sets - self.initial_arm
+
+
+def arm_deficits(steps: tuple[TStep, ...]) -> tuple[ArmDeficit, ...]:
+    """展开域内按事件盘点 arm 供需，返回存在短缺的事件（规则 C 证据）。
+
+    **只看展开域**（而非模块全量）：判定的对象是"这次展开所代表的执行"，
+    而计数短缺的结论只在无截断时可靠——截断会人为削减 set 供给，制造假短缺，
+    故调用方（`structural_fixpoint`）在 `truncated` 时不得据此判 DEADLOCK。
+    """
+    waits: dict[int, int] = {}
+    sets: dict[int, int] = {}
+    for st in steps:
+        ev = event_of(st)
+        if ev is None or st.sync is None:
+            continue
+        if st.sync.kind in _SET_KINDS:
+            sets[ev] = sets.get(ev, 0) + 1
+        elif st.sync.kind in _WAIT_KINDS:
+            waits[ev] = waits.get(ev, 0) + 1
+    out = [
+        ArmDeficit(event_id=ev, waits=n, sets=sets.get(ev, 0), initial_arm=INITIAL_ARM)
+        for ev, n in sorted(waits.items())
+        if n > sets.get(ev, 0) + INITIAL_ARM
+    ]
+    return tuple(out)
+
+
+def classify_blocked(blocked_per_strategy: dict[str, tuple[int, ...]]) -> str:
+    """探索层受阻观察的性质判别（审查发现 1b）。
+
+    - `none`：无策略观察到受阻；
+    - `schedule-invariant`：**全部**策略的受阻集合完全一致 → 与调度选择无关，
+      不得再表述为"schedule 依赖观察"；
+    - `schedule-dependent`：受阻集合随策略变化 → 真·调度巧合。
+    """
+    sets_ = {frozenset(v) for v in blocked_per_strategy.values()}
+    if not sets_ or sets_ == {frozenset()}:
+        return "none"
+    if len(sets_) == 1:
+        return "schedule-invariant"
+    return "schedule-dependent"
 
 
 def structural_fixpoint(
@@ -356,11 +430,12 @@ def structural_fixpoint(
     truncated: bool,
     module_set_events: set[int],
 ) -> tuple[DeadlockFinding, ...]:
-    """确定性死锁判定（规则 A/B，见模块 docstring）。
+    """确定性死锁判定（规则 A/B/C，见模块 docstring）。
 
     两种对立贪心序都受阻才判 wait-cycle——单一顺序下的受阻可能只是
     调度巧合（NFR2：误判优先压制）。规则 A 的存在性基准是模块全量
-    syncs，与展开界无关。
+    syncs，与展开界无关；规则 C 是展开域内的纯计数论证，与顺序无关，
+    但同样受截断保护。
     """
     sem = _Semantics(steps)
     expanded_sets: dict[int, list[int]] = {}
@@ -437,6 +512,47 @@ def structural_fixpoint(
         findings.append(
             DeadlockFinding(rule=rule, event_id=ev, step_seq=f.step_seq, loc=f.loc, message=message)
         )
+
+    # -- 规则 C（arm-deficit）：纯计数论证，与交错顺序无关 --------------------
+    # 单列而非并入上面的循环：跨泳道饥饿时 wait 在贪心序下会**逐个放行**
+    # （异道 set 可达 → 供给耗尽前不受阻），只有尾部若干 wait 卡住；因此
+    # "双贪心序都受阻"不是规则 C 的前提。截断时禁用（假短缺）。
+    if not truncated:
+        classified = {ev for _rule, ev in seen}
+        for d in arm_deficits(steps):
+            if d.event_id in classified:
+                continue  # 同一事件已由 A/B 给出更强的结构性解释，不重复报
+            # 定位到**第一个必然饿死的 wait**：前 sets+INITIAL_ARM 次 wait 有
+            # arm 可用（健康放行），第 sets+INITIAL_ARM+1 次起无 arm 可用。
+            budget = d.sets + d.initial_arm
+            culprit: TStep | None = None
+            seen_waits = 0
+            for st in steps:
+                if st.sync is None or st.sync.kind not in _WAIT_KINDS:
+                    continue
+                if event_of(st) != d.event_id:
+                    continue
+                seen_waits += 1
+                if seen_waits > budget:
+                    culprit = st
+                    break
+            if culprit is None:  # pragma: no cover — 计数短缺蕴含存在越界 wait
+                continue
+            findings.append(
+                DeadlockFinding(
+                    rule="arm-deficit",
+                    event_id=d.event_id,
+                    step_seq=culprit.seq,
+                    loc=culprit.node.loc,
+                    message=(
+                        f"wait 等待事件 {d.event_id}：展开域内 {d.waits} 次 wait 仅有 "
+                        f"{d.sets} 次 set + {d.initial_arm} 初始装载可供应——供给短缺 "
+                        f"{d.starved}，必有 {d.starved} 个 wait 永久饿死"
+                        "（纯计数论证，与交错顺序无关，确定性结论）"
+                    ),
+                )
+            )
+    findings.sort(key=lambda f: (f.step_seq, f.rule))
     return tuple(findings)
 
 

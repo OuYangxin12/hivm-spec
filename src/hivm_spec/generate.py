@@ -128,6 +128,30 @@ CONFIG_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        # 未经对拍的语义假设（D9 前置登记，M2 审查发现 3）
+        "assumptions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "subject",
+                    "assumed",
+                    "authority",
+                    "rationale",
+                    "risk_direction",
+                    "resolve_by",
+                ],
+                "additionalProperties": False,
+                "properties": {
+                    "subject": {"type": "string", "minLength": 1},
+                    "assumed": {"type": "string", "minLength": 1},
+                    "authority": {"enum": ["upstream-cpp", "hardware-golden", "doc"]},
+                    "rationale": {"type": "string"},
+                    "risk_direction": {"enum": ["false-positive", "false-negative", "both"]},
+                    "resolve_by": {"type": "string"},
+                },
+            },
+        },
     },
 }
 
@@ -169,11 +193,21 @@ class TrustLedger:
     entries: dict[str, str] = field(default_factory=dict)
     escape_hatches: list[str] = field(default_factory=list)
     drift: list[DriftEntry] = field(default_factory=list)
+    #: 未经对拍的语义假设（D9 前置；结构见 spec.SemanticAssumption）
+    assumptions: list[Any] = field(default_factory=list)
     generated_at: str = ""
 
     def frozen_ops(self) -> tuple[str, ...]:
         """因未处置漂移而冻结 trust 升级的 op（D9）。"""
         return tuple(sorted({d.op for d in self.drift if d.freezes_trust_upgrade}))
+
+    def unresolved_assumptions(self) -> tuple[str, ...]:
+        """尚未对拍的语义假设主体——同样冻结 trust 升级（D9 前置）。
+
+        理由与 drift 一致：语义还没和权威链对齐就升级信任，等于把猜测
+        当成结论。假设登记在案且未销案时，信任封顶 provisional。
+        """
+        return tuple(sorted({a.subject for a in self.assumptions}))
 
     def max_trust(self) -> str:
         order = {"provisional": 0, "cross-validated": 1, "anchored": 2}
@@ -195,6 +229,18 @@ class TrustLedger:
             },
             "trust": dict(sorted(self.entries.items())),
             "frozen_by_drift": list(self.frozen_ops()),
+            "frozen_by_assumption": list(self.unresolved_assumptions()),
+            "assumptions": [
+                {
+                    "subject": a.subject,
+                    "assumed": a.assumed,
+                    "authority": a.authority,
+                    "rationale": a.rationale,
+                    "risk_direction": a.risk_direction,
+                    "resolve_by": a.resolve_by,
+                }
+                for a in sorted(self.assumptions, key=lambda x: x.subject)
+            ],
             "drift": [
                 {
                     "op": d.op,
@@ -239,6 +285,7 @@ def generate(spec: Spec, *, timestamp: str | None = None) -> GenResult:
         spec_hash=spec.spec_hash(),
         generated_at=timestamp or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
     )
+    ledger.assumptions = list(spec.assumptions)
     for op in spec.ops:
         ledger.entries[op.op] = op.effective_trust.value
         if isinstance(op.value, HostFn):
