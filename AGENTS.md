@@ -26,8 +26,8 @@ pytest specs/cases -q
 **改 HIVM pass（主仓侧）后，须跑对应 spec 工具**（M1 起可用）：
 
 ```bash
-hivm-spec tool ub_occupancy <before.mlir> <after.mlir>   # M1
-hivm-spec tool timeline <after.mlir>                      # M2
+hivm-spec tool ub_occupancy <after.mlir>   # M1（单输入，D12；溢出是 after 的内在性质，无需 before 锚点）
+hivm-spec tool timeline <after.mlir>       # M2
 ```
 
 失败即停止并修复，**不得**通过放松断言、改期望值、加 skip 或降低门禁使其变绿。
@@ -142,7 +142,10 @@ hivm-spec tool equivalence   before.mlir after.mlir     # 语义等效：before 
 - **Python 版本**：核心 `>=3.10`（cp310 绑定 ABI 地板，勿放宽）；IR 层测试标
   `requires_bindings`。
 - **依赖**：主依赖钉兼容区间（FR8）；环境用 uv，`~/.cache` 只读时
-  `export UV_CACHE_DIR=/tmp/uvcache`。
+  `export UV_CACHE_DIR=/tmp/uvcache`；`~/.local/share/uv` 只读时
+  `export UV_PYTHON_INSTALL_DIR` 须指向**持久**目录（如仓库内 `.uvpython/`，
+  已 gitignore）——3.10 解释器落 /tmp 会随重启丢失并使 `.venv310` 断链
+  （评审 2026-09-09 实测发生）。
 - **文档联动**：里程碑退出时更新 `design-framework.md` §9 与 `milestone-plan.md`；
   新增决策进 §3（沿用 D<n> 编号），不另起文档。
 - **性能预算**：per-tool 预算见 D10；里程碑退出时实测回填。

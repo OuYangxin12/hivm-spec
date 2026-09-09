@@ -96,7 +96,7 @@
 
 ## 7. 横切事项
 
-- **CI 接入**：✅ 已落地（`.github/workflows/ci.yml` 四 job：lint+types / core 矩阵 3.10+3.12 / schema golden / spec-gate）；M1 末评估 lit 接入 `check-bishengir`；
+- **CI 接入**：✅ 已落地（`.github/workflows/ci.yml` 四 job：lint+types / core 矩阵 3.10+3.12 / schema golden / spec-gate）；M1 末 lit 接入评估已完成：**不接入** check-bishengir（纯下游外部工具定位，主仓 lit 负责结构回归；边界口径已落 requirements Q7）；
 - **描述 PR 模板**：trust 升级 checklist（三类用例证据，D4/OD4+OD11）；**已由 spec-gate R2 机械强制**；
 - **对拍用例库**：`specs/cases/`，与描述同 PR 演进（OD11）；**语料按 D13 分层引入**（L0 手写 → L1 干净 UT → L2 按需剥离 → L3 e2e dump），入库并以 manifest 锚定来源 commit（框架 §14）；
 - **性能复核点**：M3.7 是 D1 的唯一预设复查点；per-tool 预算见 D10；

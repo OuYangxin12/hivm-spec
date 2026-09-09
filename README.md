@@ -57,7 +57,7 @@ spec 工具（统一契约：吃 MLIR，吐结构化结论/视图）
 | 前置门禁 | V1 hivm 方言解析 / V2 环境依赖 | ✅ 已通过 |
 | 工程基线 | CI 四门禁 + spec-gate + 双层版本策略（D5/D7） | ✅ 已落地 |
 | M0 | VIR 契约（T0.0）+ 语法 spike（T0.0b）+ DSL 骨架：描述→静态检查→配置文档→装配 | ✅ 已完成 |
-| M1 | UB 占用图（首个 spec 工具） | 未开始 |
+| M1 | UB 占用图（首个 spec 工具） | ✅ 已完成 |
 | M2 | 时序图 + 结构性死锁判定 | 未开始 |
 | M3 | 等价验证（具体执行档）— 含不可裁剪内核（D8） | 未开始 |
 | M4 | 符号档（z3）+ 候选性质 | 未开始 |
@@ -68,6 +68,13 @@ spec 工具（统一契约：吃 MLIR，吐结构化结论/视图）
 # 环境（uv；~/.cache 只读时需重定向缓存）
 export UV_CACHE_DIR=/tmp/uvcache
 uv pip install -e ".[test,dev]"
+
+# IR 接口层（py3.10 + bindings，跑 requires_bindings 测试与 tool 命令）
+# 解释器安装目录须持久——落 /tmp 会随重启丢失并使 .venv310 断链
+export UV_PYTHON_INSTALL_DIR="$PWD/.uvpython"   # ~/.local/share/uv 只读时必设
+uv venv .venv310 --python 3.10
+uv pip install -e ".[test]" --python .venv310/bin/python
+bash scripts/setup_bindings.sh                  # 绑定树落位 .bindings/（约 246M）
 
 # 提交前本地预检（与 CI 等价）
 ruff check . && ruff format --check . && mypy src
