@@ -1,6 +1,7 @@
 """hivm-spec CLI 入口（D2：统一薄 CLI，实现是"引擎 + 配置文档"）。
 
-`gen`/`check`/`tool ub_occupancy`/`tool timeline`/`tool equivalence` 已实现（T0.x/T1.6/T2.x/T3.x）；
+`gen`/`check`/`tool ub_occupancy`/`tool timeline`/`tool equivalence`/`tool sync_pairing`
+已实现（T0.x/T1.6/T2.x/T3.x/T4.4）；
 `tool equivalence` 仍返回明确的 PENDING 退出码而非假成功——与
 `COVERAGE_GAP`/`UNTRUSTED_DESCRIPTION` 同一原则：缺口必须显式。
 """
@@ -23,7 +24,7 @@ EXIT_FAIL = 1
 EXIT_PENDING = 3  # 阶段未实现：可被脚本区分，不与"验证失败"混淆
 
 #: 已实现的工具（equivalence 属 M3，保持 PENDING）
-_IMPLEMENTED_TOOLS = ("ub_occupancy", "timeline", "equivalence")
+_IMPLEMENTED_TOOLS = ("ub_occupancy", "timeline", "equivalence", "sync_pairing")
 #: timeline 的策略选择（"random" 展开为全部固定种子，见 timeline.RANDOM_SEEDS）
 _STRATEGY_CHOICES = ("all", "sequential", "round_robin", "pipe_priority", "random")
 
@@ -52,7 +53,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("descriptions", nargs="+", help="待检查的描述文件")
 
     p_tool = sub.add_parser("tool", help="运行 spec 工具（M1+）")
-    p_tool.add_argument("name", help="工具名，如 ub_occupancy / timeline / equivalence")
+    p_tool.add_argument(
+        "name", help="工具名，如 ub_occupancy / timeline / equivalence / sync_pairing"
+    )
     p_tool.add_argument("-c", "--config", default="config.json", help="配置文档（由 gen 产出）")
     p_tool.add_argument("--json", metavar="PATH", help="把完整结论写为 JSON")
     p_tool.add_argument("--no-chart", action="store_true", help="不在终端渲染文本图（T1.5/T2.4）")
