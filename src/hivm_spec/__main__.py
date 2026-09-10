@@ -55,6 +55,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="固定账本时间戳（用于可复现构建；配置文档本身与时间无关）",
     )
 
+    p_doctor = sub.add_parser("doctor", help="环境自检：检查 Python/bindings/依赖是否就绪")
+    p_doctor.set_defaults(cmd="doctor")
+
     p_check = sub.add_parser("check", help="描述静态检查（T0.2，生成前置门）")
     p_check.add_argument("descriptions", nargs="+", help="待检查的描述文件")
 
@@ -62,7 +65,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tool.add_argument(
         "name", help="工具名，如 ub_occupancy / timeline / equivalence / sync_pairing"
     )
-    p_tool.add_argument("-c", "--config", default="config.json", help="配置文档（由 gen 产出）")
+    p_tool.add_argument(
+        "-c",
+        "--config",
+        default=None,
+        help=f"配置文档（由 gen 产出）。缺省用 {DEFAULT_CONFIG}，不存在则自动生成",
+    )
+    p_tool.add_argument(
+        "--spec",
+        nargs="+",
+        default=None,
+        help="自动生成配置文档时用的描述文件（缺省 specs/toy.py specs/cv.py）",
+    )
     p_tool.add_argument("--json", metavar="PATH", help="把完整结论写为 JSON")
     p_tool.add_argument("--no-chart", action="store_true", help="不在终端渲染文本图（T1.5/T2.4）")
     p_tool.add_argument(
@@ -212,6 +226,67 @@ def _cmd_gen(paths: list[str], output: str, timestamp: str | None) -> int:
     return EXIT_OK
 
 
+#: 缺省描述集：此仓自带的两份描述。取并集是 gen 的既有语义。
+DEFAULT_SPECS = ("specs/toy.py", "specs/cv.py")
+#: 缺省配置文档路径。gen 已实测确定性（同输入两次产出 byte 级一致），故可安全缓存。
+DEFAULT_CONFIG = "build/config.json"
+
+
+def _cmd_doctor() -> int:
+    """环境自检。
+
+    退出码：有 MISSING 项 → EXIT_FAIL；仅 DEGRADED → EXIT_OK。
+    理由：能力受限仍可用（跑得动就不该让脚本失败），核心不可用则应当挡住。
+    """
+    from hivm_spec.doctor import diagnose
+
+    report = diagnose()
+    print("hivm-spec 环境自检")
+    print(report.render())
+    return EXIT_FAIL if report.has_blocker else EXIT_OK
+
+
+def _resolve_config(config: str | None, specs: list[str] | None) -> tuple[str | None, int]:
+    """定位配置文档；不存在则自动 gen。
+
+    返回 `(路径, 退出码)`；路径为 None 表示失败。
+
+    **自动 gen 是安全的**：gen 已实测确定性（同输入两次产出 byte 级一致），
+    所以"自动生成"不会引入不可复现性。这不是把 spec_hash 藏起来——每次结论
+    里仍然带着它，审计坐标不变。
+    """
+    if config is not None:
+        if not Path(config).is_file():
+            # 保留可执行的下一步（FR5）：显式路径不存在时不自动生成——用户
+            # 明确说了用哪个文件，就不该悄悄换一个——但要告诉他怎么造出来。
+            print(
+                f"配置文档不存在：{config}。先运行 hivm-spec gen <描述> -o {config}",
+                file=sys.stderr,
+            )
+            return None, EXIT_FAIL
+        return config, EXIT_OK
+
+    out = Path(DEFAULT_CONFIG)
+    if out.is_file():
+        return str(out), EXIT_OK
+
+    sources = list(specs) if specs else [s for s in DEFAULT_SPECS if Path(s).is_file()]
+    if not sources:
+        print(
+            f"未找到配置文档 {DEFAULT_CONFIG}，且缺省描述（{', '.join(DEFAULT_SPECS)}）"
+            "也不存在。请用 -c 指定配置文档，或用 --spec 指定描述文件",
+            file=sys.stderr,
+        )
+        return None, EXIT_FAIL
+
+    print(f"未找到 {DEFAULT_CONFIG}，从描述自动生成：{' '.join(sources)}", file=sys.stderr)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    rc = _cmd_gen(sources, str(out), None)
+    if rc != EXIT_OK:
+        return None, rc
+    return str(out), EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
@@ -219,6 +294,9 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_check(args.descriptions)
     if args.cmd == "gen":
         return _cmd_gen(args.description, args.output, args.timestamp)
+
+    if args.cmd == "doctor":
+        return _cmd_doctor()
 
     return _cmd_tool(
         args.name,
@@ -231,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         trace=args.trace,
         anchor=args.anchor,
         mode=args.mode,
+        specs=args.spec,
     )
 
 
@@ -247,7 +326,7 @@ def _timeline_strategies(choice: str) -> tuple[str, ...]:
 
 def _cmd_tool(
     name: str,
-    config_path: str,
+    config_path: str | None,
     inputs: list[str],
     json_out: str | None,
     chart: bool = True,
@@ -257,6 +336,7 @@ def _cmd_tool(
     trace: str | None = None,
     anchor: str | None = None,
     mode: str = "concrete",
+    specs: list[str] | None = None,
 ) -> int:
     from hivm_spec.assemble import load_config, run_tool
     from hivm_spec.bindings import BindingsError
@@ -269,14 +349,10 @@ def _cmd_tool(
         )
         return EXIT_PENDING
 
-    cfg_path = Path(config_path)
-    if not cfg_path.is_file():
-        print(
-            f"配置文档不存在：{cfg_path}。先运行 hivm-spec gen <描述> -o {cfg_path}",
-            file=sys.stderr,
-        )
-        return EXIT_FAIL
-    config, spec_hash = load_config(cfg_path)
+    resolved, rc = _resolve_config(config_path, specs)
+    if resolved is None:
+        return rc
+    config, spec_hash = load_config(Path(resolved))
 
     if len(inputs) != 1:
         print(
