@@ -706,8 +706,92 @@ def run_equivalence(
     )
 
 
+def run_sync_pairing(config: dict[str, Any], module: VModule, spec_hash: str = "") -> ToolResult:
+    """同步静态配对检查（T4.4）——账本级快速检查。
+
+    不需要锚点：配对完整性是待验 IR 的**内在性质**（与 ub_occupancy 同理，D12）。
+
+    **本工具不产出 DEADLOCK。** 账目异常在语义上是"可疑"而非"必然死锁"——
+    真实案例（CreatePreload stage-major）里顺序不可行时计数照样平衡。死锁判定
+    归 timeline 工具；二者不一致时以 timeline 为准（M4 卡 §4.6）。
+    """
+    from hivm_spec import pairing as pr
+
+    trust = _trust_of(config)
+    check_cfg = next((c for c in config.get("checks", []) if c["name"] == "sync_pairing"), None)
+    if check_cfg is None:
+        return ToolResult(
+            tool="sync_pairing",
+            verdict=Verdict.UNTRUSTED_DESCRIPTION,
+            spec_hash=spec_hash,
+            engine_version=pr.PAIRING_ENGINE_VERSION,
+            trust=trust,
+            ir_fingerprint=module.fingerprint(),
+            diagnostics=[
+                Finding(
+                    severity="error",
+                    message="描述未声明 sync_pairing check——无法确定配对口径",
+                    rule="assemble/missing-check",
+                )
+            ],
+        )
+
+    report = pr.analyze_pairing(module)
+
+    diagnostics = [
+        Finding(severity=f.severity, message=f.message, rule=f.rule, loc=f.loc)
+        for f in report.findings
+    ]
+    for note in report.notes:
+        diagnostics.append(Finding(severity="info", message=note, rule="pairing/note"))
+
+    # verdict 归属：
+    # - 有 wait 却全无 set → 该 wait 必然等不到，是确定的问题（DEADLOCK 由
+    #   timeline 判，这里用 MISMATCH 表达"账目与语义要求不符"）；
+    # - 只有 warning（orphan-set / 不平）→ 不构成验证失败；
+    # - 一个事件都没有 → 无从检查，报缺口而非 OK。
+    if report.has_error:
+        verdict = Verdict.MISMATCH
+    elif not report.ledgers:
+        verdict = Verdict.COVERAGE_GAP
+        diagnostics.append(
+            Finding(
+                severity="warning",
+                message="模块内无可配对的同步事件——本检查未实际发生，不得据此判定同步正确",
+                rule="pairing/vacuous",
+            )
+        )
+    else:
+        verdict = Verdict.OK
+
+    return ToolResult(
+        tool="sync_pairing",
+        verdict=verdict,
+        spec_hash=spec_hash,
+        engine_version=pr.PAIRING_ENGINE_VERSION,
+        trust=trust,
+        ir_fingerprint=module.fingerprint(),
+        diagnostics=diagnostics,
+        details={
+            "events": [
+                {
+                    "event_id": led.event_id,
+                    "sets": led.sets,
+                    "waits": led.waits,
+                    "balanced": led.balanced,
+                    "pipes": list(led.pipes),
+                    "has_implicit": led.has_implicit,
+                }
+                for led in report.ledgers
+            ],
+            "unattributable": report.unattributable,
+            "implicit_events": report.implicit_events,
+        },
+    )
+
+
 #: 工具名 → 运行函数（timeline 走 run_timeline 的 kwargs 分发）
-_TOOLS = {"ub_occupancy": run_ub_occupancy}
+_TOOLS = {"ub_occupancy": run_ub_occupancy, "sync_pairing": run_sync_pairing}
 
 
 def run_tool(
@@ -719,7 +803,9 @@ def run_tool(
         return run_equivalence(config, module, spec_hash, **kwargs)
     fn = _TOOLS.get(name)
     if fn is None:
-        raise KeyError(f"未知工具 {name!r}；已实现：ub_occupancy / timeline / equivalence")
+        raise KeyError(
+            f"未知工具 {name!r}；已实现：ub_occupancy / timeline / equivalence / sync_pairing"
+        )
     return fn(config, module, spec_hash)
 
 

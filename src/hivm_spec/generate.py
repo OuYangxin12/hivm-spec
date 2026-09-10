@@ -123,7 +123,7 @@ CONFIG_SCHEMA: dict[str, Any] = {
                 "required": ["name", "options"],
                 "additionalProperties": False,
                 "properties": {
-                    "name": {"enum": ["ub_occupancy", "timeline", "equivalence"]},
+                    "name": {"enum": ["ub_occupancy", "timeline", "equivalence", "sync_pairing"]},
                     "options": {"type": "object"},
                 },
             },

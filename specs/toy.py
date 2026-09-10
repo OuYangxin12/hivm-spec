@@ -138,6 +138,12 @@ spec.check("timeline", scheduling="conservative", strategies=4, unroll_bound=16)
 # 若超差，应按 dtype 显式放宽并记录理由，不得全局调松。
 # round_mode 取值与主仓 HIVM_RoundModeEnum 一致（HIVMAttrs.td:440）。
 spec.check("equivalence", rtol=1e-5, atol=1e-8, round_mode="rint")
+# 同步静态配对（M4/T4.4）。与 timeline **互补而非替代**：timeline 做交错探索
+# （重，受展开界限制），本检查做全模块账目盘点（轻，不受截断影响）。
+# 二者各能看见对方看不见的东西——set 无人 wait 只有本检查会报；顺序不可行导致
+# 的死锁只有 timeline 能判。计数平衡**不蕴含**无死锁（真实案例 CreatePreload
+# stage-major 即计数平衡却死锁），故本检查不产出 DEADLOCK。
+spec.check("sync_pairing")
 
 # --- 语义假设段：未经对拍的口径必须登记（D9 前置，M2 审查发现 3） ----------
 

@@ -278,7 +278,7 @@ class CheckSpec:
 
 #: 已知 check 名（封闭集合：未知 check 应在静态检查阶段被拒绝，
 #: 而不是生成一个什么都不做的工具）
-KNOWN_CHECKS = frozenset({"ub_occupancy", "timeline", "equivalence"})
+KNOWN_CHECKS = frozenset({"ub_occupancy", "timeline", "equivalence", "sync_pairing"})
 
 
 # ---------------------------------------------------------------------------
