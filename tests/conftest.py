@@ -37,18 +37,54 @@ def _bindings_available() -> bool:
 
 BINDINGS = _bindings_available()
 
+_Z3_HINT = (
+    "z3 不可用（symbolic extra 未安装）。安装：pip install -e '.[symbolic]'；"
+    "决策见 docs/decisions/T4.0-z3-dependency.md。"
+)
+
+
+def _z3_available() -> bool:
+    """探测 z3 是否可用。
+
+    与 bindings 同一哲学：缺依赖是**已登记的覆盖缺口**，不是"测试通过"。
+    """
+    return importlib.util.find_spec("z3") is not None
+
+
+Z3_AVAILABLE = _z3_available()
+
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if BINDINGS:
-        return
-    skip = pytest.mark.skip(reason=f"requires_bindings: {BINDINGS_HINT}")
-    for item in items:
-        if "requires_bindings" in item.keywords:
-            item.add_marker(skip)
+    # 两类能力**各自独立**判断：不能因为 bindings 可用就提前 return，否则
+    # z3 的 skip 永远挂不上——在装了 bindings 的机器上会静默失效。
+    if not BINDINGS:
+        skip = pytest.mark.skip(reason=f"requires_bindings: {BINDINGS_HINT}")
+        for item in items:
+            if "requires_bindings" in item.keywords:
+                item.add_marker(skip)
+
+    if not Z3_AVAILABLE:
+        z3_skip = pytest.mark.skip(reason=f"requires_z3: {_Z3_HINT}")
+        for item in items:
+            if "requires_z3" in item.keywords:
+                item.add_marker(z3_skip)
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    """把跳过的绑定测试渲染为显式覆盖缺口，而非沉默的 's'。"""
+    """把跳过的测试渲染为显式覆盖缺口，而非沉默的 's'。"""
+    z3_skipped = [
+        r
+        for r in terminalreporter.stats.get("skipped", [])
+        if "requires_z3" in str(getattr(r, "longrepr", ""))
+    ]
+    if z3_skipped:
+        terminalreporter.write_sep("=", "COVERAGE GAP (registered)", yellow=True)
+        terminalreporter.write_line(
+            f"符号后端未被本次运行验证：{len(z3_skipped)} 个用例因缺少 z3 跳过。"
+        )
+        terminalreporter.write_line(f"原因：{_Z3_HINT}")
+        terminalreporter.write_line("该缺口已在 T4.0 决策中登记（docs/decisions/）。")
+
     if BINDINGS:
         return
     skipped = [
