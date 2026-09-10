@@ -44,6 +44,8 @@ __all__ = [
     "ValueError_",
     "ValueKernel",
     "concrete",
+    "exp",
+    "neg",
     "parse_value_kernel",
     "slot_of",
     "symbol",
@@ -117,9 +119,12 @@ class ConcreteValue:
 #: 允许的符号运算符。**封闭集合**——超出即报错，而不是默默构造一个 M4 翻译
 #: 不了的节点。受限子集是 OD1 方案 A 的定义部分，不是暫时的偷懒。
 _ARITH = frozenset({"add", "sub", "mul", "div", "neg"})
+#: 一元逐元素运算。exp 是真实语料的常客（hivm.hir.vexp），
+#: 早先只支持二元 elementwise，导致 vexp/vcast 被判成"无可执行值语义"。
+_UNARY = frozenset({"neg", "exp"})
 _COMPARE = frozenset({"eq", "ne", "lt", "le", "gt", "ge"})
 _SELECT = frozenset({"select"})
-SYMBOLIC_OPS = _ARITH | _COMPARE | _SELECT
+SYMBOLIC_OPS = _ARITH | _COMPARE | _SELECT | _UNARY
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +281,33 @@ def _binary(kind: str, a: Value, b: Value) -> Value:
     raise ValueError_(f"不支持的值载体组合：{type(a).__name__} 与 {type(b).__name__}")
 
 
+def _unary(kind: str, a: Value) -> Value:
+    """一元逐元素运算（双模）。
+
+    与 `_binary` 分开而不是塞进去凑数：一元的参数个数、符号节点的 args 形状
+    都不同，混在一起会让"参数不匹配"这类错误变得难以定位。
+    """
+    if isinstance(a, SymbolicValue):
+        return SymbolicValue(op=kind, args=(a,), dtype_name=a.dtype_name, shape_=a.shape_)
+    if isinstance(a, ConcreteValue):
+        import numpy as np
+
+        ops = {"neg": np.negative, "exp": np.exp}
+        fn = ops.get(kind)
+        if fn is None:  # pragma: no cover - kind 由内部调用限定
+            raise ValueError_(f"具体模式未实现一元运算 {kind!r}")
+        return ConcreteValue(array=fn(a.array), dtype_name=a.dtype_name)
+    raise ValueError_(f"不支持的值载体：{type(a).__name__}")
+
+
+def neg(a: Value) -> Value:
+    return _unary("neg", a)
+
+
+def exp(a: Value) -> Value:
+    return _unary("exp", a)
+
+
 def add(a: Value, b: Value) -> Value:
     return _binary("add", a, b)
 
@@ -367,6 +399,12 @@ _ELEMENTWISE_FNS = {
     "div": div,
 }
 
+#: 一元逐元素运算表（elementwise(fn, src) 形态）
+_UNARY_FNS = {
+    "neg": neg,
+    "exp": exp,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ValueKernel:
@@ -395,6 +433,14 @@ class ValueKernel:
             ) from None
         if self.primitive == "copy":
             return operands[0]
+        if len(operands) == 1:
+            # 一元 elementwise（如 vexp 的 elementwise(exp, src)）
+            unary_fn = _UNARY_FNS.get(self.fn)
+            if unary_fn is None:
+                raise ValueError_(
+                    f"一元 elementwise 不支持运算 {self.fn!r}；允许：{sorted(_UNARY_FNS)}"
+                )
+            return unary_fn(operands[0])
         binary = _ELEMENTWISE_FNS[self.fn]
         acc = operands[0]
         for nxt in operands[1:]:
@@ -436,12 +482,15 @@ def parse_value_kernel(decl: str) -> ValueKernel:
         if len(positional) != 1:
             raise ValueError_(f"copy 需恰好一个源参数，得到 {positional}")
         return ValueKernel(primitive="copy", inputs=(positional[0],), output=output)
-    # elementwise(fn, a, b, ...)
-    if len(positional) < 3:
-        raise ValueError_(f"elementwise 需 fn 与至少两个操作数，得到 {positional}")
+    # elementwise(fn, a[, b, ...])：一元与多元都支持
+    if len(positional) < 2:
+        raise ValueError_(f"elementwise 需 fn 与至少一个操作数，得到 {positional}")
     fn = positional[0]
-    if fn not in _ELEMENTWISE_FNS:
+    allowed = set(_ELEMENTWISE_FNS) | set(_UNARY_FNS)
+    if fn not in allowed:
+        raise ValueError_(f"elementwise 运算 {fn!r} 不在受限子集内；允许：{sorted(allowed)}")
+    if len(positional) == 2 and fn not in _UNARY_FNS:
         raise ValueError_(
-            f"elementwise 运算 {fn!r} 不在受限子集内；允许：{sorted(_ELEMENTWISE_FNS)}"
+            f"elementwise({fn}, …) 是多元运算，需至少两个操作数；一元可用：{sorted(_UNARY_FNS)}"
         )
     return ValueKernel(primitive="elementwise", inputs=tuple(positional[1:]), output=output, fn=fn)

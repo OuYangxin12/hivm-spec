@@ -233,28 +233,75 @@ def test_unknown_dtype_suffix_is_not_defaulted_to_f32() -> None:
     assert "假阴性" in why
 
 
-def test_specs_from_module_takes_func_args_only() -> None:
-    """入口输入 = FUNC_ARG buffer；本地 alloc 不算。
+def test_specs_from_module_uses_func_args_not_allocs() -> None:
+    """输入面取自 `VModule.func_args`，而不是 `allocs`。
 
-    本地 alloc 是中间缓冲，内容由 kernel 自己算出。给它预置随机值会掩盖
-    "忘了初始化"这类缺陷。
+    回归的是 T3.7 实测暴露的真实缺陷：早先用 `VAlloc(origin=FUNC_ARG)`，而那个
+    清单只收带 `#hivm.address_space` 标注的参数（占用分析的口径）。真实 L2 语料
+    的入参多是 `memref<16x16xf16>` 这类无标注形式，于是 41 份语料里 37 份推不出
+    输入、整份 kernel 退化成**假缺口**。
     """
     from hivm_spec.inputs import specs_from_module
-    from hivm_spec.vir import AllocOrigin, Coverage, Loc, VAlloc, VModule, VRegion
+    from hivm_spec.vir import Coverage, Loc, VFuncArg, VModule, VRegion
+
+    loc = Loc(file="t.mlir", line=1)
+    module = VModule(
+        source="t.mlir",
+        items=(VRegion(id="f0", kind="func", loc=loc, items=()),),
+        func_args=(
+            # 无 address_space 标注——正是早先被漏掉的形态
+            VFuncArg(value="%input1", shape_text="16x16xf16", space="", index=0),
+            VFuncArg(value="%gm", shape_text="128xf32", space="gm", index=1),
+        ),
+        coverage=Coverage(),
+        arch="a3",
+    )
+    specs, problems = specs_from_module(module)
+    assert problems == ()
+    assert [s.name for s in specs] == ["%input1", "%gm"]
+    assert specs[0].dtype == "f16" and specs[0].shape == (16, 16)
+    assert specs[1].dtype == "f32" and specs[1].shape == (128,)
+
+
+def test_specs_from_module_reports_undeducible_inputs() -> None:
+    """无法推导的输入必须留下原因，不得静默丢弃。"""
+    from hivm_spec.inputs import specs_from_module
+    from hivm_spec.vir import Coverage, Loc, VFuncArg, VModule, VRegion
+
+    loc = Loc(file="t.mlir", line=1)
+    module = VModule(
+        source="t.mlir",
+        items=(VRegion(id="f0", kind="func", loc=loc, items=()),),
+        func_args=(VFuncArg(value="%dyn", shape_text="?x16xf32", space="gm", index=0),),
+        coverage=Coverage(),
+        arch="a3",
+    )
+    specs, problems = specs_from_module(module)
+    assert specs == ()
+    assert len(problems) == 1
+    assert "#0" in problems[0] and "动态维" in problems[0]
+
+
+def test_local_allocs_are_not_inputs() -> None:
+    """本地 memref.alloc 不算输入——那是中间缓冲。
+
+    给它预置随机值会掩盖"忘了初始化"这类缺陷。
+    """
+    from hivm_spec.inputs import specs_from_module
+    from hivm_spec.vir import (
+        AllocOrigin,
+        Coverage,
+        Loc,
+        VAlloc,
+        VModule,
+        VRegion,
+    )
 
     loc = Loc(file="t.mlir", line=1)
     module = VModule(
         source="t.mlir",
         items=(VRegion(id="f0", kind="func", loc=loc, items=()),),
         allocs=(
-            VAlloc(
-                name="arg0",
-                space="gm",
-                loc=loc,
-                shape_text="128xf32",
-                origin=AllocOrigin.FUNC_ARG,
-                value="%arg0",
-            ),
             VAlloc(
                 name="buf1",
                 space="ub",
@@ -264,42 +311,12 @@ def test_specs_from_module_takes_func_args_only() -> None:
                 value="%alloc",
             ),
         ),
+        func_args=(),
         coverage=Coverage(),
         arch="a3",
     )
-    specs, problems = specs_from_module(module)
-    assert problems == ()
-    assert [s.name for s in specs] == ["%arg0"]
-    assert specs[0].shape == (128,)
-    assert specs[0].dtype == "f32"
-
-
-def test_specs_from_module_reports_undeducible_inputs() -> None:
-    """无法推导的输入必须留下原因，不得静默丢弃。"""
-    from hivm_spec.inputs import specs_from_module
-    from hivm_spec.vir import AllocOrigin, Coverage, Loc, VAlloc, VModule, VRegion
-
-    loc = Loc(file="t.mlir", line=1)
-    module = VModule(
-        source="t.mlir",
-        items=(VRegion(id="f0", kind="func", loc=loc, items=()),),
-        allocs=(
-            VAlloc(
-                name="arg0",
-                space="gm",
-                loc=loc,
-                shape_text="?x16xf32",
-                origin=AllocOrigin.FUNC_ARG,
-                value="%arg0",
-            ),
-        ),
-        coverage=Coverage(),
-        arch="a3",
-    )
-    specs, problems = specs_from_module(module)
+    specs, _ = specs_from_module(module)
     assert specs == ()
-    assert len(problems) == 1
-    assert "arg0" in problems[0]
 
 
 @pytest.mark.requires_bindings

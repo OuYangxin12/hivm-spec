@@ -234,23 +234,23 @@ def parse_shape_text(text: str) -> tuple[tuple[int, ...] | None, str, str]:
 def specs_from_module(module: Any) -> tuple[tuple[InputSpec, ...], tuple[str, ...]]:
     """从 VIR 推导入口输入规格。
 
-    入口输入 = `AllocOrigin.FUNC_ARG` 的 buffer：它们由调用方持有，是 kernel
-    的真实输入面。本地 `memref.alloc` 不算——那是中间缓冲，其内容由 kernel
-    自己算出，预置随机值反而会掩盖"忘了初始化"这类缺陷。
+    数据源是 `VModule.func_args`（kernel 的**全部**函数参数），**不是**
+    `allocs`。早先版本用 `VAlloc(origin=FUNC_ARG)`，而那个清单只收带
+    `#hivm.address_space` 标注的参数——那是占用分析的口径。真实语料里
+    `memref<16x16xf16>` 这类无标注参数恰恰是主要输入面，于是 T3.7 实测出现
+    41 份语料里 37 份推不出输入、整份 kernel 退化成覆盖缺口的**假缺口**。
+
+    本地 `memref.alloc` 不算输入——那是中间缓冲，其内容由 kernel 自己算出，
+    预置随机值反而会掩盖"忘了初始化"这类缺陷。
 
     返回 `(输入规格, 无法推导的原因清单)`。
     """
-    from hivm_spec.vir import AllocOrigin
-
     specs: list[InputSpec] = []
     problems: list[str] = []
-    for alloc in getattr(module, "allocs", ()):
-        if alloc.origin is not AllocOrigin.FUNC_ARG:
-            continue
-        shape, dtype, why = parse_shape_text(alloc.shape_text)
-        key = alloc.value or alloc.name
+    for arg in getattr(module, "func_args", ()):
+        shape, dtype, why = parse_shape_text(arg.shape_text)
         if shape is None:
-            problems.append(f"{alloc.name}: {why}")
+            problems.append(f"参数 #{arg.index}: {why}")
             continue
-        specs.append(InputSpec(name=key, dtype=dtype, shape=shape))
+        specs.append(InputSpec(name=arg.value, dtype=dtype, shape=shape))
     return tuple(specs), tuple(problems)
