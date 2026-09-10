@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -160,8 +161,24 @@ def compare_symbolic(
             notes.append(f"seq{seq} 非符号值，跳过——已计入未比较")
             continue
 
-        lt = translate(lv, symbols=shared_syms, functions=shared_fns)
-        rt = translate(rv, symbols=shared_syms, functions=shared_fns)
+        try:
+            lt = translate(lv, symbols=shared_syms, functions=shared_fns)
+            rt = translate(rv, symbols=shared_syms, functions=shared_fns)
+        except RecursionError:
+            # 表达式树太深（深展开的循环会产生数百层嵌套），翻译器的递归下降
+            # 撑不住。**崩溃不是结论**——报缺口，让调用方知道"没验成"，
+            # 而不是让整个工具带着栈回溯退出（FR7）。
+            return SymbolicDiff(
+                outcome=SymbolicOutcome.UNKNOWN,
+                bound=bound,
+                compared=compared,
+                notes=(
+                    *notes,
+                    f"seq{seq} 表达式树过深，翻译超出递归上限"
+                    f"（当前 {sys.getrecursionlimit()}）——未能求解，不得视为等价。"
+                    "可减小 --bound 后重试",
+                ),
+            )
         uninterpreted |= set(lt.uninterpreted) | set(rt.uninterpreted)
         has_division = has_division or lt.has_division or rt.has_division
 

@@ -226,3 +226,40 @@ def test_details_exit_code_reflects_verdict() -> None:
     ).module
     r3 = run_tool("equivalence", cfg, gm, "x", anchor=gm, mode="symbolic")
     assert verdict_exit_code(r3.verdict) == 4
+
+
+# ---------------------------------------------------------------------------
+# 健壮性（T4.5 压测发现）
+# ---------------------------------------------------------------------------
+
+
+def test_deep_expression_reports_gap_instead_of_crashing() -> None:
+    """**崩溃不是结论**。
+
+    T4.5 压测发现：表达式树深约 600 层时，翻译器的递归下降会抛
+    RecursionError，整个工具带着栈回溯退出。深展开的循环真的会产生这种
+    深度，所以这不是理论问题。
+
+    现在捕获它并报 UNKNOWN（→ COVERAGE_GAP）：用户得知"没验成"，而不是
+    看到一屏 traceback，更不是被误导成"验过了"（FR7）。
+    """
+    x, y = symbol("x"), symbol("y")
+    deep = x
+    for _ in range(900):
+        deep = add(deep, y)
+
+    d = compare_symbolic({0: deep}, {0: deep}, bound=16)
+    assert d.outcome is SymbolicOutcome.UNKNOWN
+    assert not d.proven
+    assert any("递归上限" in n for n in d.notes), f"须说明原因，实得 {d.notes}"
+
+
+def test_moderate_depth_still_solves() -> None:
+    """确认上一条不是把正常规模也一并放弃了。"""
+    x, y = symbol("x"), symbol("y")
+    a = b = x
+    for _ in range(200):
+        a = add(a, y)
+        b = add(b, y)
+    d = compare_symbolic({0: a}, {0: b}, bound=16)
+    assert d.proven, "深度 200 属正常规模，应当能求解"
