@@ -135,6 +135,12 @@ class TStep:
     func: int
     #: 泳道（pipe）；空 pipe 归入 "@unassigned"
     lane: str
+    #: 由外到内的**外层区域链**（不含节点自身）。
+    #
+    # 为 VTrace 的 on_region_enter/on_region_exit 提供区域对象：解释执行需要
+    # 在进出区域时回调，而扁平的步骤序列本身丢掉了这个结构。放在这里而不是让
+    # 解释器自己再走一遍 VIR——那正是 D6 要消灭的第二套遍历。
+    region_path: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +165,12 @@ def expand_steps(module: VModule, bound: int) -> Expansion:
 
     sync_by_node = {s.node_id: s for s in module.syncs}
 
-    def emit_region(items: tuple[Any, ...], path: tuple[int, ...], func: int) -> bool:
+    def emit_region(
+        items: tuple[Any, ...],
+        path: tuple[int, ...],
+        func: int,
+        regions: tuple[Any, ...] = (),
+    ) -> bool:
         """按程序序展开一个区域；返回是否因上限截断。"""
         nonlocal truncated, static_full
         for item in items:
@@ -172,13 +183,19 @@ def expand_steps(module: VModule, bound: int) -> Expansion:
                 lane = (sync.pipe if sync is not None else item.pipe) or "@unassigned"
                 steps.append(
                     TStep(
-                        seq=len(steps), node=item, sync=sync, loop_path=path, func=func, lane=lane
+                        seq=len(steps),
+                        node=item,
+                        sync=sync,
+                        loop_path=path,
+                        func=func,
+                        lane=lane,
+                        region_path=regions,
                     )
                 )
                 continue
             loop = item.loop
             if loop is None:
-                if emit_region(item.items, (*path, 0), func):
+                if emit_region(item.items, (*path, 0), func, (*regions, item)):
                     return True
                 continue
             trip = loop.trip_count
@@ -196,7 +213,7 @@ def expand_steps(module: VModule, bound: int) -> Expansion:
                 iters, why = trip, ""
                 static_full += 1
             for it in range(iters):
-                if emit_region(item.items, (*path, it), func):
+                if emit_region(item.items, (*path, it), func, (*regions, item)):
                     return True
             if why:
                 notes.append(why)
@@ -204,7 +221,7 @@ def expand_steps(module: VModule, bound: int) -> Expansion:
         return False
 
     for fi, top in enumerate(module.items):
-        if emit_region(top.items, (), fi):
+        if emit_region(top.items, (), fi, (top,)):
             break
 
     return Expansion(

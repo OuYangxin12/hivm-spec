@@ -316,3 +316,82 @@ def test_real_l0_corpus_interprets_end_to_end() -> None:
     # 数值正确性：vadd 是 a+a，输入 arange(4) → [0,2,4,6]
     final = res.env.values[next(k for k in reversed(list(res.env.values)) if "alloc_0" in k)]
     np.testing.assert_allclose(final.array, np.array([0.0, 2.0, 4.0, 6.0], dtype=np.float32))
+
+
+# ---------------------------------------------------------------------------
+# VTrace：VIR 契约里为逐 op 值哈希预留的唯一落点（M3 卡 §1）
+# ---------------------------------------------------------------------------
+
+
+class _Recorder:
+    """最小 VTrace 实现，记录回调序列。"""
+
+    def __init__(self) -> None:
+        self.events: list[tuple] = []
+
+    def on_node(self, node, values) -> None:  # type: ignore[no-untyped-def]
+        self.events.append(("node", node.op, dict(values)))
+
+    def on_region_enter(self, region) -> None:  # type: ignore[no-untyped-def]
+        self.events.append(("enter", region.id))
+
+    def on_region_exit(self, region) -> None:  # type: ignore[no-untyped-def]
+        self.events.append(("exit", region.id))
+
+
+def test_interpret_emits_through_vtrace_contract() -> None:
+    """解释器必须通过 VIR 契约的 VTrace 对外发布事件。
+
+    M3 卡 §1 把 VTrace 指定为"逐 op 值哈希与首发散点定位的**唯一落点**"，并
+    要求"不新增并行结构"。若解释器只往私有结构里记，外部工具就得另建一套
+    遍历——那正是 D6 要消灭的双源真理。
+    """
+    body = (_node("n1", "hivm.hir.vadd", ("%a", "%a", "%o")),)
+    loop = VRegion(id="L", kind="for", loc=LOC, items=body, loop=VLoop(iv="i", trip_count=2))
+    rec = _Recorder()
+    interpret(_module((loop,)), _cfg(), {"%a": _f32(1.0)}, trace=rec)
+
+    kinds = [e[0] for e in rec.events]
+    assert kinds == ["enter", "enter", "node", "node", "exit", "exit"]
+    # 区域进出必须正确嵌套：先进 func 再进 loop，退出反序
+    assert rec.events[0][1] == "f0"
+    assert rec.events[1][1] == "L"
+    assert rec.events[-2][1] == "L"
+    assert rec.events[-1][1] == "f0"
+
+
+def test_vtrace_carries_value_slots_from_vir_contract() -> None:
+    """回调携带的是 VIR 的 ValueSlot（mode + value_hash），不是私有结构。"""
+    from hivm_spec.vir import ValueSlot
+
+    nodes = (_node("n1", "hivm.hir.vadd", ("%a", "%a", "%o")),)
+    rec = _Recorder()
+    interpret(_module(nodes), _cfg(), {"%a": _f32(2.0)}, trace=rec)
+
+    # events[0] 是 region enter，节点事件要挑出来
+    _kind, _op, values = next(e for e in rec.events if e[0] == "node")
+    slot = values["%o"]
+    assert isinstance(slot, ValueSlot)
+    assert slot.mode == "concrete"
+    assert slot.value_hash.startswith("sha256:")
+
+
+def test_vtrace_also_reports_unmodeled_steps() -> None:
+    """未建模的步也要发事件——静默跳过会让消费者把"没算"读成"算过且一致"。"""
+    nodes = (_node("n1", "hivm.hir.mmadL1", ("%a", "%out")),)
+    rec = _Recorder()
+    interpret(_module(nodes), _cfg(), {"%a": _f32(1.0)}, trace=rec)
+
+    node_events = [e for e in rec.events if e[0] == "node"]
+    assert len(node_events) == 1
+    slot = next(iter(node_events[0][2].values()))
+    assert slot.mode == "unbound", "没有值时用 unbound 表达，而不是伪造一个哈希"
+
+
+def test_trace_is_optional_and_does_not_change_results() -> None:
+    """挂不挂 trace 不得影响结论——观测不能改变被观测对象。"""
+    nodes = (_node("n1", "hivm.hir.vadd", ("%a", "%a", "%o")),)
+    m = _module(nodes)
+    without = interpret(m, _cfg(), {"%a": _f32(3.0)})
+    with_trace = interpret(m, _cfg(), {"%a": _f32(3.0)}, trace=_Recorder())
+    assert [t.out_hash for t in without.traces] == [t.out_hash for t in with_trace.traces]

@@ -436,3 +436,76 @@ def test_real_corpus_mismatch_is_detected_end_to_end() -> None:
     # 发散沿数据流传播 → 后续步受影响，只报首现 + 计数
     assert result.details["impacted_steps"] >= 1
     assert result.details["tolerance"]["rtol"] > 0
+
+
+# ---------------------------------------------------------------------------
+# T3.6：逐 op 值哈希 trace 随结论输出
+# ---------------------------------------------------------------------------
+
+
+def test_details_carry_per_op_hash_trace() -> None:
+    """结论里必须带逐 op 值哈希 trace，供人工比对与二次定位（T3.6）。"""
+    from hivm_spec.assemble import run_equivalence
+
+    m = _add_module()
+    result = run_equivalence(_cfg(), m, "sha256:x", anchor=m)
+    trace = result.details["trace"]
+    assert trace, "trace 不得为空"
+    row = trace[0]
+    assert {"seq", "label", "op", "line", "left", "right", "same"} <= set(row)
+    assert row["same"] is True
+
+
+def test_trace_holds_hashes_not_full_tensors() -> None:
+    """trace 只放哈希与标签，不放全量张量。
+
+    全量张量动辄上百 MB，而真正要回答的是"从哪一步起两侧不同"——哈希足够。
+    """
+    from hivm_spec.assemble import run_equivalence
+
+    m = _add_module()
+    result = run_equivalence(_cfg(), m, "sha256:x", anchor=m)
+    for row in result.details["trace"]:
+        assert isinstance(row["left"], str)
+        assert row["left"] == "" or row["left"].startswith("sha256:")
+
+
+@pytest.mark.requires_bindings
+def test_trace_shows_divergence_propagation_boundary() -> None:
+    """trace 必须让"哪一步开始发散"一眼可读：之前 same=True，之后 same=False。
+
+    这是 T3.6 定位能力的可检验形态——不只报一个结论，还留下可复核的证据链。
+    """
+    import importlib.util
+    import json as _json
+    from pathlib import Path
+
+    from hivm_spec.assemble import run_equivalence
+    from hivm_spec.generate import generate
+    from hivm_spec.ir_engine import lower_module_text
+
+    root = Path(__file__).resolve().parents[1]
+    loader = importlib.util.spec_from_file_location("toy_tr", root / "specs" / "toy.py")
+    assert loader and loader.loader
+    mod = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(mod)
+    cfg = _json.loads(generate(mod.spec, timestamp="2026-01-01T00:00:00+00:00").config_bytes)
+    modeled = {o["op"] for o in cfg["ops"]}
+    pipes = {o["op"]: o.get("pipe", "") for o in cfg["ops"]}
+
+    src = (root / "specs" / "cases" / "corpus" / "l0" / "loop_load_add_store.mlir").read_text()
+    broken = src.replace("hivm.hir.vadd", "hivm.hir.vmul")
+
+    def _lower(text: str, name: str):  # type: ignore[no-untyped-def]
+        return lower_module_text(text, modeled, source=name, op_pipes=pipes).module
+
+    result = run_equivalence(
+        cfg, _lower(broken, "b.mlir"), "sha256:x", anchor=_lower(src, "a.mlir"), bound=4
+    )
+    trace = result.details["trace"]
+    # load 在缺陷之前 → 一致；其后全部发散（沿数据流传播）
+    assert trace[0]["same"] is True, trace[0]
+    assert all(r["same"] is False for r in trace[1:]), trace
+    # 首发散点与 trace 里第一个 same=False 的行一致
+    first_false = next(r for r in trace if not r["same"])
+    assert result.details["first_divergence"]["seq"] == first_false["seq"]
