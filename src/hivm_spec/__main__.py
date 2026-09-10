@@ -58,6 +58,41 @@ def _build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="环境自检：检查 Python/bindings/依赖是否就绪")
     p_doctor.set_defaults(cmd="doctor")
 
+    p_run = sub.add_parser("run", help="跑一份 IR 的全部适用检查（自动定位配置文档）")
+    p_run.add_argument(
+        "-c",
+        "--config",
+        default=None,
+        help=f"配置文档。缺省用 {DEFAULT_CONFIG}，不存在则自动生成",
+    )
+    p_run.add_argument(
+        "--spec",
+        nargs="+",
+        default=None,
+        help="自动生成配置文档时用的描述文件（缺省 specs/toy.py specs/cv.py）",
+    )
+    p_run.add_argument("--json", metavar="PATH", help="把完整结论写为 JSON（供 agent 消费）")
+    p_run.add_argument(
+        "--bound",
+        type=int,
+        default=None,
+        help="循环展开界（缺省取描述 unroll_bound，否则 16）",
+    )
+    p_run.add_argument(
+        "--mode",
+        choices=("concrete", "symbolic"),
+        default="concrete",
+        help="等价验证走具体档还是符号档（二者结论并列而非替代，故不同时跑）",
+    )
+    p_run.add_argument(
+        "--anchor",
+        metavar="IR",
+        default=None,
+        help="对拍锚点 IR。不给则等价验证记为 COVERAGE_GAP（本工具不做自比）",
+    )
+    # D12：位置输入恒为一份 IR
+    p_run.add_argument("input", metavar="IR", help="待验 MLIR")
+
     p_check = sub.add_parser("check", help="描述静态检查（T0.2，生成前置门）")
     p_check.add_argument("descriptions", nargs="+", help="待检查的描述文件")
 
@@ -287,6 +322,80 @@ def _resolve_config(config: str | None, specs: list[str] | None) -> tuple[str | 
     return str(out), EXIT_OK
 
 
+def _lower_ir(
+    path_str: str,
+    config: dict[str, Any],
+    label: str = "IR",
+) -> tuple[Any, int]:
+    """把一份 MLIR 文件降为 VIR。
+
+    返回 `(lowered, 退出码)`；lowered 为 None 表示失败。抽出来是因为 `tool` 与
+    `run` 都要做这件事，两份拷贝必然漂移。
+    """
+    from hivm_spec.bindings import BindingsError
+    from hivm_spec.ir_engine import lower_module_text
+
+    ir_path = Path(path_str)
+    if not ir_path.is_file():
+        print(f"{label} 文件不存在：{ir_path}", file=sys.stderr)
+        return None, EXIT_FAIL
+
+    modeled = {op["op"] for op in config.get("ops", [])}
+    effects, pipes = _effects_from_config(config)
+    try:
+        lowered = lower_module_text(
+            ir_path.read_text(encoding="utf-8"),
+            modeled,
+            source=str(ir_path),
+            op_effects=effects,
+            op_pipes=pipes,
+            arch=config.get("arch", "a3"),
+        )
+    except BindingsError as exc:
+        # 环境问题必须与"IR 有问题"分开（FR7）
+        print(f"环境不可用，未能验证{label}：{exc}", file=sys.stderr)
+        return None, EXIT_PENDING
+    return lowered, EXIT_OK
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    """跑全部适用检查（编排；不新增判定逻辑）。"""
+    from hivm_spec.assemble import load_config
+    from hivm_spec.run_checks import run_checks
+
+    resolved, rc = _resolve_config(args.config, args.spec)
+    if resolved is None:
+        return rc
+    config, spec_hash = load_config(Path(resolved))
+
+    lowered, rc = _lower_ir(args.input, config)
+    if lowered is None:
+        return rc
+    for note in lowered.engine_notes:
+        print(f"引擎提示：{note}", file=sys.stderr)
+
+    anchor_module = None
+    if args.anchor is not None:
+        anchor_lowered, rc = _lower_ir(args.anchor, config, label="锚点 IR")
+        if anchor_lowered is None:
+            return rc
+        anchor_module = anchor_lowered.module
+
+    report = run_checks(
+        lowered.module,
+        config,
+        spec_hash,
+        anchor=anchor_module,
+        bound=args.bound,
+        mode=args.mode,
+    )
+    print(report.render())
+    if args.json:
+        report.write_json(args.json)
+        print(f"结论已写入 {args.json}")
+    return report.exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
@@ -297,6 +406,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "doctor":
         return _cmd_doctor()
+
+    if args.cmd == "run":
+        return _cmd_run(args)
 
     return _cmd_tool(
         args.name,
