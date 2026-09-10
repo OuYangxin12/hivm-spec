@@ -35,9 +35,10 @@ from hivm_spec.values import (
     ValueError_,
     ValueKernel,
     parse_value_kernel,
+    slot_of,
     value_hash,
 )
-from hivm_spec.vir import Gap, GapKind, Loc, VModule
+from hivm_spec.vir import Gap, GapKind, Loc, ValueSlot, VModule, VTrace
 
 __all__ = [
     "ExecResult",
@@ -155,6 +156,7 @@ def interpret(
     inputs: Mapping[str, Value],
     *,
     bound: int | None = None,
+    trace: VTrace | None = None,
 ) -> ExecResult:
     """按程序序解释执行，产出逐 op 值哈希轨迹。
 
@@ -209,7 +211,31 @@ def interpret(
                 continue
         return buffers.get(ssa)
 
+    # VTrace 是 VIR 契约里为"逐 op 值哈希与首发散点定位"预留的**唯一落点**
+    # （M3 卡 §1）。解释器通过它对外发布事件，外部工具挂自己的消费者即可，
+    # 不必另建一套遍历——那正是 D6 要消灭的双源真理。
+    open_regions: tuple[Any, ...] = ()
+
+    def _sync_regions(target: tuple[Any, ...]) -> None:
+        """把已进入的区域链对齐到 target，按需触发 exit/enter 回调。"""
+        nonlocal open_regions
+        if trace is None:
+            open_regions = target
+            return
+        common = 0
+        # strict=False 是刻意的：两条区域链长度本就不同（这正是要找的公共前缀）
+        for a, b in zip(open_regions, target, strict=False):
+            if a is not b:
+                break
+            common += 1
+        for region in reversed(open_regions[common:]):
+            trace.on_region_exit(region)
+        for region in target[common:]:
+            trace.on_region_enter(region)
+        open_regions = target
+
     for step in exp.steps:
+        _sync_regions(step.region_path)
         node = step.node
         kernel = kernels.get(node.op)
         if kernel is None:
@@ -236,6 +262,11 @@ def interpret(
                     unmodeled=True,
                 )
             )
+            if trace is not None:
+                # 未建模的步也要发事件：静默跳过会让 trace 消费者误以为那一步
+                # 不存在，从而把"没算"读成"算过且一致"。mode="unbound" 正是
+                # ValueSlot 用来表达"没有值"的取值。
+                trace.on_node(node, {"": ValueSlot()})
             continue
 
         ins, _outs = _param_names(config, node.op)
@@ -301,6 +332,10 @@ def interpret(
             )
         )
         by_seq[step.seq] = out
+        if trace is not None:
+            trace.on_node(node, {t_: slot_of(out) for t_ in targets})
+
+    _sync_regions(())
 
     return ExecResult(
         traces=tuple(traces),

@@ -664,6 +664,23 @@ def run_equivalence(
         "inputs": strategy.provenance(),
         "anchor_fingerprint": anchor.fingerprint(),
     }
+    # 逐 op 值哈希 trace（T3.6）：随结论输出，供人工比对与二次定位。
+    # 只放哈希与标签，不放全量张量——后者动辄上百 MB，且真正要看的是"从哪一步
+    # 起两侧不同"，哈希足够回答。
+    details["trace"] = [
+        {
+            "seq": lt.seq,
+            "label": lt.label,
+            "op": lt.op,
+            "line": lt.loc.line,
+            "left": lt.out_hash,
+            "right": rt.out_hash,
+            "same": lt.out_hash == rt.out_hash,
+            "unmodeled": lt.unmodeled or rt.unmodeled,
+        }
+        for lt, rt in zip(left.traces, right.traces, strict=False)
+    ]
+
     if diff.first is not None:
         details["first_divergence"] = {
             "seq": diff.first.seq,
