@@ -39,7 +39,10 @@ dev = [
 ir = []
 # M3+ 数值基础设施（OD3）与 M4 符号后端（OD1 方案 A → B 复评）。
 numeric = ["ml_dtypes~=0.5"]
-symbolic = ["z3-solver~=4.15"]
+# T4.0 实测修正：原写 ~=4.15，但该约束等价于 >=4.15,==4.* —— 会把 z3 锁死在
+# 4.x，而当前 PyPI 最新为 5.1.0。此前未暴露是因为该 extra 从 M0 预留后一直
+# 无人安装。不设上界：z3 的 Python API 长期稳定。决策见 docs/decisions/T4.0-z3-dependency.md
+symbolic = ["z3-solver>=4.15"]
 
 [project.scripts]
 # D2：spec 工具的用户体验是"一个命令"，实现是"引擎 + 配置文档"。
@@ -104,6 +107,13 @@ ignore_missing_imports = true
 module = ["ml_dtypes"]
 ignore_missing_imports = true
 
+# z3 同理（symbolic extra，T4.0 决策）：lint+types job 不装它。symbolic.py 已把
+# 缺失当成一等情况处理（抛 SymbolicSupportError 让调用方降级），故"存根找不到"
+# 不该让类型门禁失败。
+[[tool.mypy.overrides]]
+module = ["z3"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]
 module = ["numpy", "numpy.*"]
 ignore_missing_imports = true
@@ -118,4 +128,5 @@ markers = [
     "requires_bindings: 需要主仓 bishengir python bindings（cp310 ABI）；CI 与本地高版本环境跳过，属已登记覆盖缺口（D7）",
     "schema_golden: 配置文档 schema 往返 golden 测试（OD9/FR8）",
     "crosscheck: 与主仓 C++ 链的对拍用例（OD11，trust 升级证据）",
+    "requires_z3: 需要 z3（symbolic extra）；缺失时 skip 并带任务号，不静默绿（T4.0）",
 ]
