@@ -561,6 +561,133 @@ def _timeline_details(expansion: Any, sim: Any) -> dict[str, Any]:
     }
 
 
+def _run_symbolic_equivalence(
+    config: dict[str, Any],
+    module: VModule,
+    anchor: VModule,
+    spec_hash: str,
+    trust: Any,
+    *,
+    bound: int | None = None,
+) -> ToolResult:
+    """有界符号等价（T4.2）。
+
+    两侧用**同名**符号输入：符号名按位置派生（in0/in1/…）而非用 SSA 文本，
+    因为两份 IR 的 SSA 名可能不同，用它做符号名会让两侧变成不同的自由变量，
+    等价判定就恒能找到"反例"（其实只是变量不同）。
+    """
+    from hivm_spec import symbolic_equiv as se
+    from hivm_spec.inputs import specs_from_module
+    from hivm_spec.interpret import interpret
+    from hivm_spec.timeline import DEFAULT_BOUND
+    from hivm_spec.values import symbol
+
+    eff_bound = bound if bound is not None else DEFAULT_BOUND
+    diagnostics: list[Finding] = []
+
+    def _symbolic_inputs(mod: VModule) -> dict[str, Any]:
+        specs, problems = specs_from_module(mod)
+        for why in problems:
+            diagnostics.append(
+                Finding(
+                    severity="warning",
+                    message=f"输入无法推导：{why}",
+                    rule="equivalence/undeducible-input",
+                )
+            )
+        return {s.name: symbol(f"in{i}") for i, s in enumerate(specs)}
+
+    left = interpret(module, config, _symbolic_inputs(module), bound=eff_bound)
+    right = interpret(anchor, config, _symbolic_inputs(anchor), bound=eff_bound)
+
+    # 覆盖缺口先行（与具体档 M3/equivalence.py 同一口径）：
+    # 有未建模 op 时，"没发现发散"可能只是因为没算那一步。
+    if left.has_unmodeled or right.has_unmodeled:
+        gaps = left.gaps + right.gaps
+        gnames = sorted({g.op for g in gaps if g.kind.value == "unmodeled_op" and g.op})
+        diagnostics.append(
+            Finding(
+                severity="warning",
+                message=(
+                    f"存在未建模 op（{', '.join(gnames) or '未具名'}），"
+                    "未建模的步骤不参与比较——'没发现发散'不成立"
+                ),
+                rule="equivalence/coverage-gap",
+            )
+        )
+        return ToolResult(
+            tool="equivalence",
+            verdict=Verdict.COVERAGE_GAP,
+            spec_hash=spec_hash,
+            engine_version=se.SYMBOLIC_ENGINE_VERSION,
+            trust=trust,
+            ir_fingerprint=module.fingerprint(),
+            diagnostics=diagnostics,
+            details={
+                "mode": "symbolic",
+                "bound": eff_bound,
+                "anchor_fingerprint": anchor.fingerprint(),
+            },
+        )
+
+    diff = se.compare_symbolic(
+        left.values_by_seq,
+        right.values_by_seq,
+        bound=eff_bound,
+        op_names={tr.seq: tr.op for tr in left.traces},
+    )
+
+    for note in diff.notes:
+        diagnostics.append(Finding(severity="info", message=note, rule="symbolic/note"))
+
+    if diff.outcome is se.SymbolicOutcome.COUNTEREXAMPLE:
+        verdict = Verdict.MISMATCH
+        diagnostics.append(
+            Finding(
+                severity="error",
+                message=diff.describe(),
+                rule="symbolic/counterexample",
+            )
+        )
+    elif diff.outcome is se.SymbolicOutcome.UNKNOWN:
+        # 超时/不可解/无可比步 → **缺口**，绝不按通过处理（M4 卡 §4.4）
+        verdict = Verdict.COVERAGE_GAP
+        diagnostics.append(
+            Finding(
+                severity="warning",
+                message=diff.describe(),
+                rule="symbolic/unknown",
+            )
+        )
+    else:
+        verdict = Verdict.OK
+        diagnostics.append(
+            Finding(severity="info", message=diff.describe(), rule="symbolic/proven")
+        )
+
+    return ToolResult(
+        tool="equivalence",
+        verdict=verdict,
+        spec_hash=spec_hash,
+        engine_version=se.SYMBOLIC_ENGINE_VERSION,
+        trust=trust,
+        ir_fingerprint=module.fingerprint(),
+        diagnostics=diagnostics,
+        details={
+            "mode": "symbolic",
+            "outcome": diff.outcome.value,
+            "bound": diff.bound,
+            "compared_steps": diff.compared,
+            "counterexample": diff.counterexample,
+            "uninterpreted": list(diff.uninterpreted),
+            "has_division": diff.has_division,
+            "anchor_fingerprint": anchor.fingerprint(),
+            # 结论强度声明：与具体档并列，不可混为一谈
+            "semantics": "Real（无限精度有理数）——不覆盖浮点舍入与结合律缺失",
+        },
+    )
+
+
 def run_equivalence(
     config: dict[str, Any],
     module: VModule,
@@ -568,8 +695,13 @@ def run_equivalence(
     *,
     anchor: VModule | None = None,
     bound: int | None = None,
+    mode: str = "concrete",
 ) -> ToolResult:
-    """等价验证工具：具体执行差分 + 首发散点定位（T3.5/T3.6）。
+    """等价验证工具：具体执行差分（T3.5/T3.6）或有界符号等价（T4.2）。
+
+    `mode="symbolic"` 切到符号档。二者结论**并列而非替代**：具体档说的是
+    "这组输入上没发现发散"，符号档说的是"有界内所有输入上无反例"，且符号档
+    用 Real 语义、不覆盖浮点精度（M4 卡 §4.1）。
 
     `anchor is None` 时**不自比**——报 COVERAGE_GAP。拿同一份 IR 自比恒等于
     "通过"，却什么都没验证，而报告上的 OK 与真验证过的 OK 长得一模一样
@@ -620,6 +752,9 @@ def run_equivalence(
             ],
             details={"tolerance": tol.as_dict()},
         )
+
+    if mode == "symbolic":
+        return _run_symbolic_equivalence(config, module, anchor, spec_hash, trust, bound=bound)
 
     # 两侧必须拿到**同一组**输入，否则"结果不同"可能只是输入不同。
     # 输入规格取自待验侧；锚点侧缺哪个输入就按缺口处理（不另生成）。

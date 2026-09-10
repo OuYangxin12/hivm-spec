@@ -89,6 +89,15 @@ def _build_parser() -> argparse.ArgumentParser:
     # 注意：**没有"缺省自比"**。不给 --anchor 时 equivalence 报 COVERAGE_GAP，
     # 绝不拿同一份 IR 自比后报 OK（§4 要点 2：那是最典型的自欺形态）。
     p_tool.add_argument(
+        "--mode",
+        choices=("concrete", "symbolic"),
+        default="concrete",
+        help=(
+            "equivalence：具体档（默认，这组输入上比对）或符号档"
+            "（有界内所有输入，Real 语义，需 z3）。二者结论并列而非替代"
+        ),
+    )
+    p_tool.add_argument(
         "--anchor",
         metavar="IR",
         default=None,
@@ -221,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         strategy=args.strategy,
         trace=args.trace,
         anchor=args.anchor,
+        mode=args.mode,
     )
 
 
@@ -246,6 +256,7 @@ def _cmd_tool(
     strategy: str = "all",
     trace: str | None = None,
     anchor: str | None = None,
+    mode: str = "concrete",
 ) -> int:
     from hivm_spec.assemble import load_config, run_tool
     from hivm_spec.bindings import BindingsError
@@ -326,7 +337,7 @@ def _cmd_tool(
                 print(f"环境不可用，未能验证锚点：{exc}", file=sys.stderr)
                 return EXIT_PENDING
             anchor_module = anchor_lowered.module
-        kwargs = {"anchor": anchor_module, "bound": bound}
+        kwargs = {"anchor": anchor_module, "bound": bound, "mode": mode}
     result = run_tool(name, config, lowered.module, spec_hash, **kwargs)
     print(result.render())
 
