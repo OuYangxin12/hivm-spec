@@ -24,7 +24,13 @@ EXIT_FAIL = 1
 EXIT_PENDING = 3  # 阶段未实现：可被脚本区分，不与"验证失败"混淆
 
 #: 已实现的工具（equivalence 属 M3，保持 PENDING）
-_IMPLEMENTED_TOOLS = ("ub_occupancy", "timeline", "equivalence", "sync_pairing")
+_IMPLEMENTED_TOOLS = (
+    "ub_occupancy",
+    "timeline",
+    "equivalence",
+    "sync_pairing",
+    "uninit_read",
+)
 #: timeline 的策略选择（"random" 展开为全部固定种子，见 timeline.RANDOM_SEEDS）
 _STRATEGY_CHOICES = ("all", "sequential", "round_robin", "pipe_priority", "random")
 

@@ -213,6 +213,7 @@ def test_cli_gen_produces_config_and_ledger(tmp_path: Path) -> None:
         "timeline",
         "equivalence",
         "sync_pairing",
+        "uninit_read",
     }
 
 
