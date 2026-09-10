@@ -44,7 +44,13 @@ __all__ = [
     "ValueError_",
     "ValueKernel",
     "concrete",
+    "eq",
     "exp",
+    "ge",
+    "gt",
+    "le",
+    "lt",
+    "ne",
     "neg",
     "parse_value_kernel",
     "slot_of",
@@ -330,6 +336,25 @@ def eq(a: Value, b: Value) -> Value:
 
 def lt(a: Value, b: Value) -> Value:
     return _binary("lt", a, b)
+
+
+# T4.1 补齐：_COMPARE 声明了 6 个比较运算且具体模式（np.*）全都实现了，但公开
+# 构造函数此前只有 eq/lt。子集声明与可用 API 不一致会让描述侧写得出、调用侧
+# 调不到——由 test_subset_and_translator_stay_in_sync 发现。
+def ne(a: Value, b: Value) -> Value:
+    return _binary("ne", a, b)
+
+
+def le(a: Value, b: Value) -> Value:
+    return _binary("le", a, b)
+
+
+def gt(a: Value, b: Value) -> Value:
+    return _binary("gt", a, b)
+
+
+def ge(a: Value, b: Value) -> Value:
+    return _binary("ge", a, b)
 
 
 def select(cond: Value, a: Value, b: Value) -> Value:
