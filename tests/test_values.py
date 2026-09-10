@@ -19,6 +19,7 @@ from hivm_spec.values import (
     concrete,
     lt,
     mul,
+    parse_value_kernel,
     select,
     slot_of,
     symbol,
@@ -260,3 +261,43 @@ def test_every_toy_value_declaration_is_executable() -> None:
         assert kernel.apply(args).mode == "symbolic"
         checked += 1
     assert checked >= 4, "toy 应有多条值语义声明；数量骤减说明描述被改动"
+
+
+# ---------------------------------------------------------------------------
+# 一元 elementwise（T3.7 实测补齐）
+# ---------------------------------------------------------------------------
+
+
+def test_unary_elementwise_executes_in_both_modes() -> None:
+    """一元 elementwise（vexp 的 elementwise(exp, src)）双模可执行。
+
+    回归缺陷：早先解析器硬性要求 elementwise 至少两个操作数，导致真实语料里的
+    hivm.hir.vexp / vcast 被判成"无可执行值语义"——明明描述里写了语义，却因
+    实现只支持二元而退化成覆盖缺口。
+    """
+    k = parse_value_kernel("elementwise(exp, src, into=out)")
+    assert k.inputs == ("src",)
+    assert k.fn == "exp"
+
+    got = k.apply({"src": concrete(np.array([0.0, 1.0], dtype=np.float32), "f32")})
+    np.testing.assert_allclose(got.array, np.exp([0.0, 1.0]), rtol=1e-6)
+
+    sym = k.apply({"src": symbol("x", shape=(2,))})
+    assert sym.mode == "symbolic"
+    assert sym.text() == "exp(x)"
+
+
+def test_unary_declaration_roundtrips() -> None:
+    decl = "elementwise(neg, src, into=out)"
+    assert parse_value_kernel(decl).text() == decl
+
+
+def test_binary_op_still_rejects_single_operand() -> None:
+    """二元运算给一个操作数仍须报错——放行一元不等于放弃参数检查。"""
+    with pytest.raises(ValueError_, match="多元运算"):
+        parse_value_kernel("elementwise(add, a, into=out)")
+
+
+def test_unknown_unary_fn_is_rejected() -> None:
+    with pytest.raises(ValueError_, match="不在受限子集内"):
+        parse_value_kernel("elementwise(sqrt, src, into=out)")

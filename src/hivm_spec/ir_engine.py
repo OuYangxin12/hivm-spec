@@ -28,6 +28,7 @@ from hivm_spec.vir import (
     SizeOrigin,
     SyncKind,
     VAlloc,
+    VFuncArg,
     VIRError,
     VLoop,
     VModule,
@@ -199,6 +200,7 @@ class IREngine:
         self._counter = 0
         self._gaps: list[Gap] = []
         self._allocs: list[VAlloc] = []
+        self._func_args: list[VFuncArg] = []
         self._syncs: list[VSync] = []
         self._seen_ops: set[str] = set()
         self._notes: list[str] = []
@@ -234,6 +236,7 @@ class IREngine:
             source=source,
             items=tuple(top_regions),
             allocs=tuple(self._allocs),
+            func_args=tuple(self._func_args),
             syncs=tuple(self._syncs),
             coverage=coverage,
             arch=self.arch,
@@ -452,9 +455,28 @@ class IREngine:
         except (AttributeError, IndexError):
             return
 
-        for arg in args:
+        for idx, arg in enumerate(args):
             type_str = str(arg.type)
             space = _space_of(type_str)
+
+            # 等价验证的输入面：**全部** memref 函数参数都要登记，无论有没有
+            # address_space 标注。真实语料里 memref<16x16xf16> 这类无标注参数
+            # 恰恰是主要输入面；漏了它们，整份 kernel 会因"推不出输入"退化成
+            # 覆盖缺口（T3.7 实测：41 份语料里 37 份因此变成假缺口）。
+            if type_str.startswith("memref<"):
+                _n, _o, arg_shape = _nbytes_of(type_str)
+                self._func_args.append(
+                    VFuncArg(
+                        value=str(arg),
+                        shape_text=arg_shape,
+                        space=space,
+                        index=idx,
+                    )
+                )
+
+            # 以下是**占用分析**的口径：只登记带 address_space 标注的参数。
+            # 无标注的通常是 host 侧内存，不占片上空间——把它们算进来会造成
+            # 占用假阳性。两个口径刻意分开，见 VFuncArg 的 docstring。
             if not space:
                 continue
             nbytes, origin, shape_text = _nbytes_of(type_str)

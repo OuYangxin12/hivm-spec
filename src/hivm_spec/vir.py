@@ -190,6 +190,34 @@ class ValueSlot:
             raise VIRError(f"ValueSlot.mode 非法：{self.mode!r}")
 
 
+@dataclass(frozen=True, slots=True)
+class VFuncArg:
+    """kernel 入口的函数参数（等价验证的输入面）。
+
+    **与 `VAlloc(origin=FUNC_ARG)` 的分工**：后者只登记带 `#hivm.address_space`
+    标注的参数，因为占用分析只关心片上 buffer。但等价验证要给 kernel 喂输入，
+    需要的是**全部**函数参数——真实语料里 `memref<16x16xf16>` 这类无空间标注的
+    参数恰恰是主要输入面。
+
+    两者语义不同，故不合并：把无标注参数塞进 allocs 会让占用分析把 host 侧内存
+    算进片上预算（假阳性）；而让等价验证只看 allocs 则推不出输入，整份 kernel
+    退化成覆盖缺口（假缺口）。
+    """
+
+    #: SSA 键（`str(BlockArgument)`），与 VNode.operands 里的写法一致
+    value: str
+    #: 形如 "16x16xf16"；动态维保留 "?"
+    shape_text: str = ""
+    #: 地址空间；无标注时为空串
+    space: str = ""
+    #: 在函数签名里的位置
+    index: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.value:
+            raise VIRError("VFuncArg.value 不得为空——输入必须可指认")
+
+
 # --------------------------------------------------------------------------
 # 节点
 # --------------------------------------------------------------------------
@@ -487,6 +515,9 @@ class VModule:
     #: 使"程序序容器"在两层是同一个概念。
     items: tuple[VRegion, ...] = ()
     allocs: tuple[VAlloc, ...] = ()
+    #: kernel 入口的**全部**函数参数（等价验证的输入面）。
+    #: 与 allocs 分工见 VFuncArg 的 docstring。
+    func_args: tuple[VFuncArg, ...] = ()
     syncs: tuple[VSync, ...] = ()
     coverage: Coverage = field(default_factory=Coverage)
     #: 目标架构（"a3"/"a5"），影响容量常量（OD7）
