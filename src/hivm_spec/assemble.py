@@ -790,8 +790,92 @@ def run_sync_pairing(config: dict[str, Any], module: VModule, spec_hash: str = "
     )
 
 
+def run_uninit_read(
+    config: dict[str, Any], module: VModule, spec_hash: str = "", *, bound: int | None = None
+) -> ToolResult:
+    """未初始化读检查（T4.3）。
+
+    不需要锚点：未初始化读是待验 IR 的**内在性质**（D12）。
+    用独立 tainted 标记位而非 poison 魔数——魔数可能是合法计算结果，NaN 更不
+    安全（真实计算本就会产生 NaN），届时无法区分"读了未初始化"与"算出了 NaN"。
+    """
+    from hivm_spec import uninit as un
+
+    trust = _trust_of(config)
+    check_cfg = next((c for c in config.get("checks", []) if c["name"] == "uninit_read"), None)
+    if check_cfg is None:
+        return ToolResult(
+            tool="uninit_read",
+            verdict=Verdict.UNTRUSTED_DESCRIPTION,
+            spec_hash=spec_hash,
+            engine_version=un.UNINIT_ENGINE_VERSION,
+            trust=trust,
+            ir_fingerprint=module.fingerprint(),
+            diagnostics=[
+                Finding(
+                    severity="error",
+                    message="描述未声明 uninit_read check",
+                    rule="assemble/missing-check",
+                )
+            ],
+        )
+
+    report = un.analyze_uninit_reads(module, config, bound=bound)
+
+    diagnostics = [
+        Finding(
+            severity="error",
+            message=r.describe(with_loc=False),
+            rule="uninit/read-before-write",
+            loc=r.loc,
+            extra={"buffer": r.buffer, "param": r.param, "seq": r.seq},
+        )
+        for r in report.reads
+    ]
+    for note in report.notes:
+        diagnostics.append(Finding(severity="info", message=note, rule="uninit/note"))
+
+    if report.reads:
+        verdict = Verdict.MISMATCH
+    elif report.tracked_buffers == 0:
+        # 一个本地缓冲都没有 → 检查未实际发生。报 OK 等于用"没查"冒充"没问题"。
+        verdict = Verdict.COVERAGE_GAP
+        diagnostics.append(
+            Finding(
+                severity="warning",
+                message="无本地分配的缓冲可供分析——本检查未实际发生",
+                rule="uninit/vacuous",
+            )
+        )
+    else:
+        verdict = Verdict.OK
+
+    return ToolResult(
+        tool="uninit_read",
+        verdict=verdict,
+        spec_hash=spec_hash,
+        engine_version=un.UNINIT_ENGINE_VERSION,
+        trust=trust,
+        ir_fingerprint=module.fingerprint(),
+        diagnostics=diagnostics,
+        details={
+            "tracked_buffers": report.tracked_buffers,
+            "unmodeled_ops": list(report.unmodeled_ops),
+            "truncated": report.truncated,
+            "reads": [
+                {"seq": r.seq, "op": r.op, "buffer": r.buffer, "param": r.param}
+                for r in report.reads
+            ],
+        },
+    )
+
+
 #: 工具名 → 运行函数（timeline 走 run_timeline 的 kwargs 分发）
-_TOOLS = {"ub_occupancy": run_ub_occupancy, "sync_pairing": run_sync_pairing}
+_TOOLS = {
+    "ub_occupancy": run_ub_occupancy,
+    "sync_pairing": run_sync_pairing,
+    "uninit_read": run_uninit_read,
+}
 
 
 def run_tool(
@@ -804,7 +888,8 @@ def run_tool(
     fn = _TOOLS.get(name)
     if fn is None:
         raise KeyError(
-            f"未知工具 {name!r}；已实现：ub_occupancy / timeline / equivalence / sync_pairing"
+            f"未知工具 {name!r}；已实现：ub_occupancy / timeline / equivalence / "
+            "sync_pairing / uninit_read"
         )
     return fn(config, module, spec_hash)
 

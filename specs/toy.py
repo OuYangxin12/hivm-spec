@@ -144,6 +144,10 @@ spec.check("equivalence", rtol=1e-5, atol=1e-8, round_mode="rint")
 # 的死锁只有 timeline 能判。计数平衡**不蕴含**无死锁（真实案例 CreatePreload
 # stage-major 即计数平衡却死锁），故本检查不产出 DEADLOCK。
 spec.check("sync_pairing")
+# 未初始化读（M4/T4.3）。用独立 tainted 标记位而非 poison 魔数：魔数可能是合法
+# 计算结果（0xDEADBEEF 作 f32 是个正常负数），NaN 更不安全——真实计算本就会产生
+# NaN，届时无法区分"读了未初始化内存"与"算出了 NaN"（M4 卡 §4.5）。
+spec.check("uninit_read")
 
 # --- 语义假设段：未经对拍的口径必须登记（D9 前置，M2 审查发现 3） ----------
 
