@@ -39,9 +39,11 @@ __all__ = [
     "VAlloc",
     "VIRError",
     "VLoop",
+    "VMatmulSite",
     "VModule",
     "VNode",
     "VRegion",
+    "VStructure",
     "VSync",
     "VTrace",
     "ValueSlot",
@@ -246,6 +248,10 @@ class VNode:
     trust: str = ""
     #: 透传属性（保真存档，引擎按需读取；不参与语义判定）
     attrs: Mapping[str, str] = field(default_factory=dict)
+    #: DPS 输入槽位数（Linalg 契约：`ins` 的个数）。0 表示该 op 不是 DPS op
+    #: 或未知。结构类检查用它把"输入"与"累加器（init）"分开——两者语义不同：
+    #: 零累加器是常态，零**输入**说明这个操作数没有数据来源（M5 卡 §2.1）。
+    dps_input_count: int = 0
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -502,6 +508,56 @@ class VTrace(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class VMatmulSite:
+    """一处矩阵乘的结构记录（op 名 / 位置 / 操作数 / 输入槽位数）。
+
+    **为什么不建 VNode**：这类 op 多为社区方言（`linalg.matmul`）或值语义
+    逃生舱（`hivm.hir.mmadL1`）。把它们插进节点流，会让 `timeline`/
+    `ub_occupancy`/`equivalence` 凭空多出未建模条目、改变它们的结论——
+    一项新检查不该有这种副作用。故只记结构事实，供结构类检查消费。
+    """
+
+    op: str
+    loc: Loc
+    operands: tuple[str, ...] = ()
+    #: DPS 输入槽位数（不含累加器/init）
+    dps_input_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class VStructure:
+    """结构级只读事实：某个 SSA 值**是谁产生的**、它是不是编译期零。
+
+    **与值语义的分工**：值语义（`hivm.hir.vadd` 到底算出了什么）归描述库；
+    本结构只回答"这个操作数的数据从哪来"。之所以需要它，是因为存在一类缺陷
+    **不做任何值运算就能判定**——例如矩阵乘的输入槽位是一个编译期零张量
+    （M5 卡 §2.1）。这类判定对 layout 代数免疫（不需要算分形布局），
+    正是值等价验证覆盖不到的地方。
+
+    全部字段由唯一遍历核在加载期一次性收集（D6：检查模块不得再访问 MLIR）。
+    """
+
+    #: SSA 文本 → 定义它的 op 全名（含社区方言，如 `linalg.fill`）
+    defs: Mapping[str, str] = field(default_factory=dict)
+    #: 结果 SSA 文本 → 定义它的 op 的操作数（有序）。
+    #: 用于沿纯视图链回溯"这个值的数据从哪来"——社区方言不建节点，
+    #: 没有这张表就回溯不下去。
+    operands: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    #: **张量/缓冲**型的编译期零值 SSA（`arith.constant` 零 splat、`linalg.fill` 零）。
+    #: 标量零（如 `real_k = 0`）**刻意不入此集**——标量取零是合法常态，
+    #: 把它算进来会让 `operand_wiring` 误报（FR2：假阳性是第一压制目标）。
+    zero_values: frozenset[str] = frozenset()
+    #: 矩阵乘站点（含社区方言与逃生舱 op）——见 VMatmulSite 的 docstring
+    matmul_sites: tuple[VMatmulSite, ...] = ()
+
+    def def_of(self, ssa: str) -> str:
+        return self.defs.get(ssa, "")
+
+    def is_zero(self, ssa: str) -> bool:
+        return ssa in self.zero_values
+
+
+@dataclass(frozen=True, slots=True)
 class VModule:
     """VIR 根：一份 MLIR 输入的完整归一化表示。
 
@@ -519,6 +575,9 @@ class VModule:
     #: 与 allocs 分工见 VFuncArg 的 docstring。
     func_args: tuple[VFuncArg, ...] = ()
     syncs: tuple[VSync, ...] = ()
+    #: 结构级只读事实（生产/写者/零值）。默认空 = 工具未收集，此时结构类
+    #: 检查必须报缺口而不是报 OK（同 `uninit_read` 的 vacuous 口径）。
+    structure: VStructure = field(default_factory=VStructure)
     coverage: Coverage = field(default_factory=Coverage)
     #: 目标架构（"a3"/"a5"），影响容量常量（OD7）
     arch: str = ""

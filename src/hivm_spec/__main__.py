@@ -45,6 +45,7 @@ _IMPLEMENTED_TOOLS = (
     "equivalence",
     "sync_pairing",
     "uninit_read",
+    "operand_wiring",
 )
 #: timeline 的策略选择（"random" 展开为全部固定种子，见 timeline.RANDOM_SEEDS）
 _STRATEGY_CHOICES = ("all", "sequential", "round_robin", "pipe_priority", "random")

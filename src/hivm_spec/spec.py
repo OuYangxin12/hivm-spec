@@ -285,6 +285,7 @@ KNOWN_CHECKS = frozenset(
         "equivalence",
         "sync_pairing",
         "uninit_read",
+        "operand_wiring",
     }
 )
 

@@ -164,7 +164,13 @@ def run_checks(
 
     results = [
         run_tool(name, config, module, spec_hash)
-        for name in ("ub_occupancy", "timeline", "sync_pairing", "uninit_read")
+        for name in (
+            "ub_occupancy",
+            "timeline",
+            "sync_pairing",
+            "uninit_read",
+            "operand_wiring",
+        )
     ]
 
     label = "equivalence" if mode == "concrete" else "equivalence(symbolic)"

@@ -130,6 +130,7 @@ CONFIG_SCHEMA: dict[str, Any] = {
                             "equivalence",
                             "sync_pairing",
                             "uninit_read",
+                            "operand_wiring",
                         ]
                     },
                     "options": {"type": "object"},

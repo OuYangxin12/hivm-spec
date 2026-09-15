@@ -121,6 +121,20 @@
       "parse_verified": "hivm-spec bindings strict (no allow-unregistered)"
     },
     {
+      "path": "l0/matmul_input_with_source.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "features": [
+        "linalg_matmul",
+        "tensor_empty",
+        "linalg_fill_zero",
+        "hivm_load"
+      ],
+      "notes": "M5/T5.6 健康对照：零只出现在 outs（累加器）槽位，两个输入都有真实来源——用于证明 operand_wiring 不因\"看到零填充\"而误报（FR2）",
+      "sha256": "sha256:083e12c7c178eee6a09c113bca1f4ba92e5c63e6e7355b372add2d2653d041d0",
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)"
+    },
+    {
       "path": "l0/nested_loop_scope.mlir",
       "layer": "l0",
       "origin": "handwritten",
@@ -132,6 +146,20 @@
       ],
       "parse_verified": "bishengir-opt strict (no allow-unregistered)",
       "notes": "嵌套区域遍历顺序约定"
+    },
+    {
+      "path": "l0/neutralized_matmul_input.mlir",
+      "layer": "l0",
+      "origin": "handwritten",
+      "features": [
+        "linalg_matmul",
+        "linalg_fill_zero",
+        "tensor_empty",
+        "hivm_load"
+      ],
+      "notes": "M5/T5.6 注入缺陷（语义维）：矩阵乘的 B 槽位被本地新建零张量顶替（B 与 outs 同值）。真实来源为 dcv pass 的跨核操作数传输缺失。IR 良构、可编译，FileCheck 类结构验证必然漏过；operand_wiring 应报 wiring/neutralized-input",
+      "sha256": "sha256:329c7d13d8e4b5f7b08fe41a14721252f750230182db1657d0c9fc240cce075f",
+      "parse_verified": "hivm-spec bindings strict (no allow-unregistered)"
     },
     {
       "path": "l0/ub_overflow_injected.mlir",

@@ -179,6 +179,7 @@ hivm-spec tool equivalence   before.mlir after.mlir     # 语义等效：before 
 |---|---|---|
 | 内存/分配类（plan-memory、multi-buffer、workspace） | `ub_occupancy` 全部 L2 目标 kernel | verdict 不得从 OK/OVERFLOW 恶化为新增 OVERFLOW |
 | 调度/同步类（cv-pipelining、sync-solver、preload） | `timeline`（M2 起可用；此前记录"PENDING(timeline)"） | 死锁/时序 verdict 变化必须解释 |
+| 前端数据流拆分类（split-dataflow / cv-pipeline / multi-buffer 拆分） | `operand_wiring` 受影响目标 kernel（ttadapter 层即可，不需 npuir） | 不得新增 `wiring/*` 命中（操作数被中和是回归） |
 | op 定义/ODS 变更 | `hivm-spec check` 全部描述 + `registry` 绊线重测 | 覆盖率变化需在 PR 中说明 |
 
 判据基线是**变更前的 verdict**：先在改动前的 commit 跑一遍留存，再在改动后跑，
