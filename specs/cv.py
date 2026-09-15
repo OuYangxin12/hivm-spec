@@ -142,3 +142,7 @@ spec.op(
 # --- checks 段 --------------------------------------------------------------
 
 spec.check("ub_occupancy", spaces=["ub", "cbuf"])
+
+# M5：矩阵乘输入来源完整性。只看 DPS 输入槽位（零累加器合法，init 不判），
+# 判定不依赖值语义——故对 mmadL1 逃生舱 / 社区方言断链免疫。
+spec.check("operand_wiring")

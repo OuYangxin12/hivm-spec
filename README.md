@@ -30,8 +30,9 @@ export HIVM_SPEC_BINDINGS="$PWD/.bindings"
 # 2. 环境自检——一眼看出哪些能力就绪
 hivm-spec doctor
 
-# 3. 跑一份 IR 的全部适用检查（首次会自动从描述生成配置文档）
-hivm-spec run path/to/kernel.mlir
+# 3. 一句话验证：环境前置门 + 全套检查 + 能力自述
+hivm-spec verify path/to/kernel.mlir
+# （只要原始编排结果：hivm-spec run path/to/kernel.mlir）
 
 # 做 pass 前后等价验证时，给出变换前的 IR 作为锚点
 hivm-spec run after.mlir --anchor before.mlir
@@ -55,6 +56,7 @@ hivm-spec run kernel.mlir --mode symbolic          # 符号档（需 pip install
 | `timeline` | pipe/event 时间线 + 结构性死锁 | 真实死锁语料 → **DEADLOCK**（4 份） |
 | `sync_pairing` | set/wait 配对完整性（账本级） | 删 wait → **orphan-set** 告警；缺 set → 报错 |
 | `uninit_read` | 是否读取了未初始化的片上 buffer | 删 load → **MISMATCH**，定位到代码行；语料零假阳性 |
+| `operand_wiring` | 矩阵乘的**输入槽位**是否有真实数据来源（不看 init） | 输入被本地零张量顶替 / 来自 `tensor.empty` → **MISMATCH** 并定位到 A/B 槽与源码行 |
 | `equivalence`（具体档） | 两份 IR 在同一组具体输入上是否逐 op 一致 | 注入 `vadd→vmul` → **MISMATCH** 并给首个发散点 |
 | `equivalence`（符号档） | 有界内**所有输入**上是否存在反例（需 z3） | 同上，并给出反例赋值 |
 
@@ -77,7 +79,11 @@ hivm-spec run kernel.mlir --mode symbolic          # 符号档（需 pip install
 4. **符号档用 Real 语义（无限精度有理数），不覆盖浮点精度**：`(a+b)+c == a+(b+c)` 在
    符号档下等价，在 f32 下因结合律缺失却不一定。数值等价归具体档负责，两档结论并列、
    不可互相替代。
-5. **覆盖是按 D13 分层引入的语料**（L0 手写 12 / L1 干净 UT 10 / L2 剥离的 e2e 19），
+5. **`operand_wiring` 只判两类可证形态**：输入槽位是编译期零、或经纯视图链来自
+   `tensor.empty`。**buffer 写者判定**（"这块 cbuf 没人写过"）需要跨核 V→C 配对的
+   同一性模型，尚未实现——含未建模搬运链（`convert_layout`/`pointer_cast`）的 IR 上
+   该检查可能不发声。它也不看 init（零累加器合法），故对"零全部合法"的程序无信号。
+6. **覆盖是按 D13 分层引入的语料**（L0 手写 12 / L1 干净 UT 10 / L2 剥离的 e2e 19），
    不是真实 pipeline 的全量覆盖率。
 
 > 覆盖率数字是特定语料快照上的实测值，会随语料与描述演进变化；复现命令见
@@ -121,6 +127,7 @@ spec 工具（统一契约：吃 MLIR，吐结构化结论/视图）
 | [docs/industry-research.md](docs/industry-research.md) | 业界调研与决策依据（Sail/EDA/系统化并发测试/Rosette） |
 | [docs/milestone-plan.md](docs/milestone-plan.md) | 里程碑执行计划（M0–M4 任务分解）与工程约定 |
 | [AGENTS.md](AGENTS.md) | agent 工作规约：核心命题、spec-gate 门禁、描述治理纪律、架构不可违约束、跨 pass 定位编排 |
+| [.agent/skills/hivm-spec/](.agent/skills/hivm-spec/SKILL.md) | **给 agent 的操作 skill**：跑哪个检查、verdict/退出码怎么读、跨 pass 定位、写描述、能力边界（附实测校验脚本） |
 | [docs/tasks/](docs/tasks/) | 里程碑任务卡（执行视图：顺序、完成信号、验收命令、止损条件、实录） |
 
 ## 路线图

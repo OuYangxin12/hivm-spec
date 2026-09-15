@@ -1005,11 +1005,111 @@ def run_uninit_read(
     )
 
 
+def run_operand_wiring(
+    config: dict[str, Any],
+    module: VModule,
+    spec_hash: str = "",
+    *,
+    bound: int | None = None,
+) -> ToolResult:
+    """矩阵乘输入来源完整性（M5）。
+
+    不需要锚点：它是待验 IR 的**内在结构性质**（同 `uninit_read`，D12）。
+    判定不依赖值语义——这正是它能覆盖 `equivalence` 因逃生舱/社区方言而
+    `COVERAGE_GAP` 的那一类缺陷（见 `hivm_spec/wiring.py` 模块 docstring）。
+    """
+    from hivm_spec import wiring as wr
+
+    trust = _trust_of(config)
+    check_cfg = next((c for c in config.get("checks", []) if c["name"] == "operand_wiring"), None)
+    if check_cfg is None:
+        return ToolResult(
+            tool="operand_wiring",
+            verdict=Verdict.UNTRUSTED_DESCRIPTION,
+            spec_hash=spec_hash,
+            engine_version=wr.WIRING_ENGINE_VERSION,
+            trust=trust,
+            ir_fingerprint=module.fingerprint(),
+            diagnostics=[
+                Finding(
+                    severity="error",
+                    message="描述未声明 operand_wiring check",
+                    rule="assemble/missing-check",
+                )
+            ],
+        )
+
+    report = wr.analyze_operand_wiring(module, config, bound=bound)
+
+    diagnostics = [
+        Finding(
+            severity="error",
+            message=f.describe(with_loc=False),
+            rule=f.rule,
+            loc=f.loc,
+            extra={
+                "slot": f.slot,
+                "value": f.value,
+                "seq": f.seq,
+                "loop_path": list(f.loop_path),
+            },
+        )
+        for f in report.findings
+    ]
+    for note in report.notes:
+        diagnostics.append(Finding(severity="info", message=note, rule="wiring/note"))
+
+    if report.findings:
+        verdict = Verdict.MISMATCH
+    elif report.vacuous:
+        # 没有可判定的矩阵乘（或引擎未收集结构事实）→ 检查未实际发生。
+        # 报 OK 等于用"没查"冒充"没问题"（与 uninit_read 的 vacuous 口径一致）。
+        verdict = Verdict.COVERAGE_GAP
+        diagnostics.append(
+            Finding(
+                severity="warning",
+                message=(
+                    "没有可判定的矩阵乘族 op——本检查未实际发生"
+                    if report.matmul_ops == 0
+                    else "结构事实缺失（引擎未收集）——本检查未实际发生"
+                ),
+                rule="wiring/vacuous",
+            )
+        )
+    else:
+        verdict = Verdict.OK
+
+    return ToolResult(
+        tool="operand_wiring",
+        verdict=verdict,
+        spec_hash=spec_hash,
+        engine_version=wr.WIRING_ENGINE_VERSION,
+        trust=trust,
+        ir_fingerprint=module.fingerprint(),
+        diagnostics=diagnostics,
+        details={
+            "matmul_ops": report.matmul_ops,
+            "structure_facts": report.structure_facts,
+            "findings": [
+                {
+                    "seq": f.seq,
+                    "op": f.op,
+                    "rule": f.rule,
+                    "slot": f.slot,
+                    "value": f.value,
+                }
+                for f in report.findings
+            ],
+        },
+    )
+
+
 #: 工具名 → 运行函数（timeline 走 run_timeline 的 kwargs 分发）
 _TOOLS = {
     "ub_occupancy": run_ub_occupancy,
     "sync_pairing": run_sync_pairing,
     "uninit_read": run_uninit_read,
+    "operand_wiring": run_operand_wiring,
 }
 
 
@@ -1024,7 +1124,7 @@ def run_tool(
     if fn is None:
         raise KeyError(
             f"未知工具 {name!r}；已实现：ub_occupancy / timeline / equivalence / "
-            "sync_pairing / uninit_read"
+            "sync_pairing / uninit_read / operand_wiring"
         )
     return fn(config, module, spec_hash)
 

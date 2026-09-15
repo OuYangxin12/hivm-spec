@@ -31,9 +31,11 @@ from hivm_spec.vir import (
     VFuncArg,
     VIRError,
     VLoop,
+    VMatmulSite,
     VModule,
     VNode,
     VRegion,
+    VStructure,
     VSync,
 )
 
@@ -75,6 +77,27 @@ SYNC_KINDS = {
     "hivm.hir.sync_block_set": SyncKind.SYNC_BLOCK_SET,
     "hivm.hir.sync_block_wait": SyncKind.SYNC_BLOCK_WAIT,
 }
+
+#: 矩阵乘族 op → **数据输入**槽位数（不含累加器/init）。
+#:
+#: 只登记"前 N 个操作数是待乘的数据"这一确定事实：`mmadL1` 的
+#: `init_condition`/`real_m/k/n` 是标量，不参与"输入有没有数据来源"的判定
+#: （标量零是合法常态）。结构类检查据此把 ins 与 outs 分开——两者语义不同，
+#: 零累加器是常态，零**输入**才说明这个操作数没有数据来源（M5 卡 §2.1）。
+MATMUL_DATA_INPUTS = {
+    "linalg.matmul": 2,
+    "linalg.batch_matmul": 2,
+    "hivm.hir.matmul": 2,
+    "hivm.hir.mix_matmul": 2,
+    "hivm.hir.mmix_matmul": 2,
+    "hivm.hir.batchMmadL1": 2,
+    "hivm.hir.mmadL1": 2,
+}
+
+#: 编译期零字面量（`arith.constant` 的 value 属性文本）。
+#: 只认**可证**的形态：零 splat 与零标量。非 splat（`dense<[0.0, 0.0]>`）不认——
+#: 认了就要解析任意 dense 文本，收益为零、风险不小。
+ZERO_LITERAL_RE = re.compile(r"^(?:dense<)?-?0(?:\.0*)?(?:[eE][+-]?\d+)?>?\s*:")
 
 #: 控制流 op → VRegion.kind
 #:
@@ -204,6 +227,15 @@ class IREngine:
         self._syncs: list[VSync] = []
         self._seen_ops: set[str] = set()
         self._notes: list[str] = []
+        # 结构级事实（M5）：谁产生了这个 SSA、它是不是编译期零。
+        # 与值语义分工见 VStructure 的 docstring。
+        self._defs: dict[str, str] = {}
+        self._operands: dict[str, tuple[str, ...]] = {}
+        self._zero_values: set[str] = set()
+        #: 标量零：**不对外**（标量取零是合法常态），仅用于识别 `linalg.fill` 是零填充。
+        self._zero_scalars: set[str] = set()
+        #: 矩阵乘站点（社区方言/逃生舱 op 不进节点流，只记结构事实）
+        self._matmul_sites: list[VMatmulSite] = []
 
     # -- id 分配：确定性且唯一（不变量 2） -------------------------------
 
@@ -220,6 +252,11 @@ class IREngine:
         self._syncs = []
         self._seen_ops = set()
         self._notes = []
+        self._defs = {}
+        self._operands = {}
+        self._zero_values = set()
+        self._zero_scalars = set()
+        self._matmul_sites = []
 
         top_regions: list[VRegion] = []
         for region in mlir_module.operation.regions:
@@ -239,6 +276,12 @@ class IREngine:
             func_args=tuple(self._func_args),
             syncs=tuple(self._syncs),
             coverage=coverage,
+            structure=VStructure(
+                defs=dict(self._defs),
+                operands=dict(self._operands),
+                zero_values=frozenset(self._zero_values),
+                matmul_sites=tuple(self._matmul_sites),
+            ),
             arch=self.arch,
             engine_version=ENGINE_VERSION,
         )
@@ -337,6 +380,10 @@ class IREngine:
         name = op.operation.name
         loc = _parse_loc(str(op.location), source)
 
+        # 结构级事实（M5）：**所有** op 都要记，包括社区方言——`linalg.fill`
+        # 这类 op 正是"零从哪来"的答案所在，而它们不是 hivm op，不会建节点。
+        self._record_structure(op, name, loc)
+
         # memref.alloc → VAlloc（M1 占用分析的基本单位）
         if name in ("memref.alloc", "memref.alloca"):
             self._record_alloc(op, loc)
@@ -374,15 +421,17 @@ class IREngine:
             )
 
         effects = self._effects_for(op, name)
+        operand_texts = tuple(str(o) for o in op.operation.operands)
         node = VNode(
             id=nid,
             op=name,
             loc=loc,
-            operands=tuple(str(o) for o in op.operation.operands),
+            operands=operand_texts,
             results=tuple(str(r) for r in op.operation.results),
             effects=effects,
             pipe=self.op_pipes.get(name, ""),
             attrs=self._extract_attrs(op),
+            dps_input_count=min(MATMUL_DATA_INPUTS.get(name, 0), len(operand_texts)),
         )
 
         if name in SYNC_KINDS:
@@ -395,6 +444,52 @@ class IREngine:
             self._record_macro_slots(node)
 
         return node
+
+    def _record_structure(self, op: Any, name: str, loc: Loc) -> None:
+        """收集结构级事实：SSA → 定义它的 op、以及可证是"编译期零"的值。
+
+        **不做值语义推断**（D6/OD8）：零只认编译期字面量——`arith.constant` 的
+        零 splat / 零标量，以及被零标量填充的 `linalg.fill`。这样识别出的零是
+        **可证**的，既不需要 layout 代数也不需要执行，正是值等价验证覆盖不到的
+        那一类判定的基础（M5 卡 §2.1）。
+
+        标量零只进内部集合（`_zero_scalars`），不对外暴露：标量取零是合法常态
+        （如 `real_k = 0`），对外暴露会让结构类检查误报（FR2）。
+        """
+        results = [str(r) for r in op.operation.results]
+        operand_texts = tuple(str(o) for o in op.operation.operands)
+        for r in results:
+            self._defs[r] = name
+            if results:
+                self._operands[r] = operand_texts
+
+        # 矩阵乘站点：社区方言与逃生舱 op 也要记（它们不会走下面的建节点路径）
+        n_data_inputs = MATMUL_DATA_INPUTS.get(name, 0)
+        if n_data_inputs:
+            self._matmul_sites.append(
+                VMatmulSite(
+                    op=name,
+                    loc=loc,
+                    operands=operand_texts,
+                    dps_input_count=min(n_data_inputs, len(operand_texts)),
+                )
+            )
+
+        if name == "arith.constant":
+            attr = self._extract_attrs(op).get("value", "")
+            if not attr or not ZERO_LITERAL_RE.match(attr):
+                return
+            for r, t in zip(results, [str(x.type) for x in op.operation.results], strict=False):
+                if "tensor<" in t or "memref<" in t:
+                    self._zero_values.add(r)
+                else:
+                    self._zero_scalars.add(r)
+            return
+
+        if name == "linalg.fill":
+            operands = [str(o) for o in op.operation.operands]
+            if operands and (operands[0] in self._zero_scalars or operands[0] in self._zero_values):
+                self._zero_values.update(results)
 
     def _effects_for(self, op: Any, name: str) -> tuple[Effect, ...]:
         """按描述声明生成效应实例。
