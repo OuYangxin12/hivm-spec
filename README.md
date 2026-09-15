@@ -30,8 +30,9 @@ export HIVM_SPEC_BINDINGS="$PWD/.bindings"
 # 2. 环境自检——一眼看出哪些能力就绪
 hivm-spec doctor
 
-# 3. 跑一份 IR 的全部适用检查（首次会自动从描述生成配置文档）
-hivm-spec run path/to/kernel.mlir
+# 3. 一句话验证：环境前置门 + 全套检查 + 能力自述
+hivm-spec verify path/to/kernel.mlir
+# （只要原始编排结果：hivm-spec run path/to/kernel.mlir）
 
 # 做 pass 前后等价验证时，给出变换前的 IR 作为锚点
 hivm-spec run after.mlir --anchor before.mlir
@@ -121,6 +122,7 @@ spec 工具（统一契约：吃 MLIR，吐结构化结论/视图）
 | [docs/industry-research.md](docs/industry-research.md) | 业界调研与决策依据（Sail/EDA/系统化并发测试/Rosette） |
 | [docs/milestone-plan.md](docs/milestone-plan.md) | 里程碑执行计划（M0–M4 任务分解）与工程约定 |
 | [AGENTS.md](AGENTS.md) | agent 工作规约：核心命题、spec-gate 门禁、描述治理纪律、架构不可违约束、跨 pass 定位编排 |
+| [.agent/skills/hivm-spec/](.agent/skills/hivm-spec/SKILL.md) | **给 agent 的操作 skill**：跑哪个检查、verdict/退出码怎么读、跨 pass 定位、写描述、能力边界（附实测校验脚本） |
 | [docs/tasks/](docs/tasks/) | 里程碑任务卡（执行视图：顺序、完成信号、验收命令、止损条件、实录） |
 
 ## 路线图

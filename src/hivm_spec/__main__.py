@@ -1,15 +1,25 @@
 """hivm-spec CLI 入口（D2：统一薄 CLI，实现是"引擎 + 配置文档"）。
 
-`gen`/`check`/`tool ub_occupancy`/`tool timeline`/`tool equivalence`/`tool sync_pairing`
-已实现（T0.x/T1.6/T2.x/T3.x/T4.4）；
-`tool equivalence` 仍返回明确的 PENDING 退出码而非假成功——与
-`COVERAGE_GAP`/`UNTRUSTED_DESCRIPTION` 同一原则：缺口必须显式。
+子命令分层：
+
+| 命令 | 层 | 用途 |
+|---|---|---|
+| `doctor` | 核心层 | 环境自检；缺什么给什么 remedy |
+| `check` / `gen` | 核心层 | 描述静态检查 / 描述→配置文档 |
+| `tool <name>` | IR 接口层 | 单类检查 |
+| `run` | IR 接口层 | 一份 IR 的全套检查（编排，不新增判定） |
+| `verify` | IR 接口层 | **agent 回路入口**：doctor 前置门 + 全套 + 能力自述 |
+
+**退出码是契约的一部分**：0=验过无问题 / 1=验出问题 / 2=环境跑不起来 /
+3=能力未实现 / 4=覆盖缺口 / 5=描述不可信。缺口与"验证失败"用不同码——脚本
+不得把"没验成"读成"验过了"（FR7）。
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -17,11 +27,16 @@ from typing import TYPE_CHECKING, Any
 from hivm_spec.vir import Access, Effect
 
 if TYPE_CHECKING:
+    from hivm_spec.run_checks import RunReport
     from hivm_spec.spec import Spec
 
 EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_PENDING = 3  # 阶段未实现：可被脚本区分，不与"验证失败"混淆
+#: 环境前置门未通过（`verify` 专用）。与 1/3/4/5 并列而非替代：
+#: "跑不起来"既不是"验出问题"(1)，也不是"这份 IR 验不全"(4)——混用会把环境
+#: 故障伪装成被验对象的属性（FR7 明令区分）。
+EXIT_ENV = 2
 
 #: 已实现的工具（equivalence 属 M3，保持 PENDING）
 _IMPLEMENTED_TOOLS = (
@@ -58,40 +73,59 @@ def _build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="环境自检：检查 Python/bindings/依赖是否就绪")
     p_doctor.set_defaults(cmd="doctor")
 
-    p_run = sub.add_parser("run", help="跑一份 IR 的全部适用检查（自动定位配置文档）")
-    p_run.add_argument(
+    # `run` 与 `verify` 共享同一套选择项。**用 parents 共享而非复制**：
+    # 两份独立的 add_argument 必然漂移（同一个坑在 doctor/bindings 探测上已经踩过）。
+    p_common = argparse.ArgumentParser(add_help=False)
+    p_common.add_argument(
         "-c",
         "--config",
         default=None,
         help=f"配置文档。缺省用 {DEFAULT_CONFIG}，不存在则自动生成",
     )
-    p_run.add_argument(
+    p_common.add_argument(
         "--spec",
         nargs="+",
         default=None,
         help="自动生成配置文档时用的描述文件（缺省 specs/toy.py specs/cv.py）",
     )
-    p_run.add_argument("--json", metavar="PATH", help="把完整结论写为 JSON（供 agent 消费）")
-    p_run.add_argument(
+    p_common.add_argument("--json", metavar="PATH", help="把完整结论写为 JSON（供 agent 消费）")
+    p_common.add_argument(
         "--bound",
         type=int,
         default=None,
         help="循环展开界（缺省取描述 unroll_bound，否则 16）",
     )
-    p_run.add_argument(
+    p_common.add_argument(
         "--mode",
         choices=("concrete", "symbolic"),
         default="concrete",
         help="等价验证走具体档还是符号档（二者结论并列而非替代，故不同时跑）",
     )
-    p_run.add_argument(
+    p_common.add_argument(
         "--anchor",
         metavar="IR",
         default=None,
         help="对拍锚点 IR。不给则等价验证记为 COVERAGE_GAP（本工具不做自比）",
     )
+
     # D12：位置输入恒为一份 IR
+    p_run = sub.add_parser(
+        "run", parents=[p_common], help="跑一份 IR 的全部适用检查（自动定位配置文档）"
+    )
     p_run.add_argument("input", metavar="IR", help="待验 MLIR")
+
+    p_verify = sub.add_parser(
+        "verify",
+        parents=[p_common],
+        help="一键验证：doctor 前置门 + 全套检查 + 能力自述（agent 回路入口）",
+    )
+    p_verify.add_argument("input", metavar="IR", help="待验 MLIR")
+    p_verify.add_argument(
+        "--summary-json",
+        metavar="PATH",
+        default=None,
+        help="与 --json 等价（保留给脚本习惯；两者同给只写一次）",
+    )
 
     p_check = sub.add_parser("check", help="描述静态检查（T0.2，生成前置门）")
     p_check.add_argument("descriptions", nargs="+", help="待检查的描述文件")
@@ -265,6 +299,9 @@ def _cmd_gen(paths: list[str], output: str, timestamp: str | None) -> int:
 DEFAULT_SPECS = ("specs/toy.py", "specs/cv.py")
 #: 缺省配置文档路径。gen 已实测确定性（同输入两次产出 byte 级一致），故可安全缓存。
 DEFAULT_CONFIG = "build/config.json"
+#: 环境变量：配置文档位置。给"已安装、在任意目录下调用"的用法一个锚点——
+#: 缺省的 `build/config.json` 与缺省描述都是 **CWD 相对**，离开仓目录就找不到。
+ENV_CONFIG_PATH = "HIVM_SPEC_CONFIG"
 
 
 def _cmd_doctor() -> int:
@@ -305,11 +342,24 @@ def _resolve_config(config: str | None, specs: list[str] | None) -> tuple[str | 
     if out.is_file():
         return str(out), EXIT_OK
 
+    # CWD 下没有：认环境变量（安装后从任意目录调用的标准姿势）
+    env_cfg = os.environ.get(ENV_CONFIG_PATH, "").strip()
+    if env_cfg:
+        p = Path(env_cfg).expanduser()
+        if p.is_file():
+            return str(p), EXIT_OK
+        print(
+            f"{ENV_CONFIG_PATH} 指向的文件不存在：{p}。先运行 hivm-spec gen <描述> -o {p}",
+            file=sys.stderr,
+        )
+        return None, EXIT_FAIL
+
     sources = list(specs) if specs else [s for s in DEFAULT_SPECS if Path(s).is_file()]
     if not sources:
         print(
-            f"未找到配置文档 {DEFAULT_CONFIG}，且缺省描述（{', '.join(DEFAULT_SPECS)}）"
-            "也不存在。请用 -c 指定配置文档，或用 --spec 指定描述文件",
+            f"未找到配置文档 {DEFAULT_CONFIG}，未设 {ENV_CONFIG_PATH}，且缺省描述"
+            f"（{', '.join(DEFAULT_SPECS)}）也不存在。"
+            "请用 -c 指定配置文档、设 HIVM_SPEC_CONFIG，或用 --spec 指定描述文件",
             file=sys.stderr,
         )
         return None, EXIT_FAIL
@@ -358,19 +408,23 @@ def _lower_ir(
     return lowered, EXIT_OK
 
 
-def _cmd_run(args: argparse.Namespace) -> int:
-    """跑全部适用检查（编排；不新增判定逻辑）。"""
+def _run_all(args: argparse.Namespace) -> tuple[RunReport | None, str, int]:
+    """定位配置 → 降级 IR → 跑全套检查。返回 `(RunReport | None, 配置路径, 退出码)`。
+
+    `run` 与 `verify` 共用这一条通路：两者的差别只在**前置门**与**输出形态**，
+    判定与编排必须完全一致，否则"同一份 IR 两种结论"就成了自造的漂移源。
+    """
     from hivm_spec.assemble import load_config
     from hivm_spec.run_checks import run_checks
 
     resolved, rc = _resolve_config(args.config, args.spec)
     if resolved is None:
-        return rc
+        return None, "", rc
     config, spec_hash = load_config(Path(resolved))
 
     lowered, rc = _lower_ir(args.input, config)
     if lowered is None:
-        return rc
+        return None, "", rc
     for note in lowered.engine_notes:
         print(f"引擎提示：{note}", file=sys.stderr)
 
@@ -378,7 +432,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if args.anchor is not None:
         anchor_lowered, rc = _lower_ir(args.anchor, config, label="锚点 IR")
         if anchor_lowered is None:
-            return rc
+            return None, "", rc
         anchor_module = anchor_lowered.module
 
     report = run_checks(
@@ -389,11 +443,54 @@ def _cmd_run(args: argparse.Namespace) -> int:
         bound=args.bound,
         mode=args.mode,
     )
+    return report, str(resolved), report.exit_code
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    """跑全部适用检查（编排；不新增判定逻辑）。"""
+    report, _config_path, rc = _run_all(args)
+    if report is None:
+        return rc
     print(report.render())
     if args.json:
         report.write_json(args.json)
         print(f"结论已写入 {args.json}")
-    return report.exit_code
+    return rc
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    """一键验证：前置门 + 全套检查 + 能力自述。
+
+    与 `run` 的唯一区别是**跑之前先挡住跑不起来的情形**，并**把能力边界写进结论**。
+    """
+    from hivm_spec.doctor import diagnose
+    from hivm_spec.verify import VerifyReport
+
+    report = diagnose()
+    if report.has_blocker:
+        # 环境问题 ≠ 覆盖缺口 ≠ 验证失败：三码必须分开（FR7）
+        print("hivm-spec verify：环境前置门未通过，未产出任何验证结论", file=sys.stderr)
+        print(report.render(), file=sys.stderr)
+        return EXIT_ENV
+
+    run_report, config_path, rc = _run_all(args)
+    if run_report is None:
+        return rc
+
+    verify = VerifyReport(
+        run_report=run_report,
+        doctor=report,
+        mode=args.mode,
+        input_ir=args.input,
+        config_path=config_path,
+        anchor=args.anchor,
+    )
+    print(verify.render())
+    out = args.json or args.summary_json
+    if out:
+        verify.write_json(out)
+        print(f"结论已写入 {out}")
+    return run_report.exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -409,6 +506,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "run":
         return _cmd_run(args)
+    if args.cmd == "verify":
+        return _cmd_verify(args)
 
     return _cmd_tool(
         args.name,
